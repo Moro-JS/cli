@@ -1,0 +1,96 @@
+{
+  "name": "@morojs/cli",
+  "version": "2.0.0",
+  "description": "MoroJS Framework - Comprehensive Development Toolkit",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "morojs-cli": "./bin/cli.js",
+    "moro-cli": "./bin/cli.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "prepublish": "npm run build",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "lint": "eslint src --fix",
+    "format": "prettier --write src/**/*.ts"
+  },
+  "keywords": [
+    "morojs",
+    "cli",
+    "generator",
+    "scaffolding",
+    "module",
+    "typescript",
+    "nodejs",
+    "framework",
+    "api",
+    "microservice",
+    "serverless",
+    "edge",
+    "lambda",
+    "vercel",
+    "cloudflare"
+  ],
+  "author": "Moro Framework Team",
+  "license": "MIT",
+  "homepage": "https://morojs.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Moro-JS/cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Moro-JS/cli/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "commander": "^14.0.0",
+    "winston": "^3.11.0",
+    "chalk": "^4.1.2",
+    "inquirer": "^8.2.6",
+    "ora": "^5.4.1",
+    "boxen": "^5.1.2",
+    "figlet": "^1.7.0",
+    "zod": "^3.22.4",
+    "fs-extra": "^11.2.0",
+    "glob": "^11.0.0",
+    "chokidar": "^3.5.3",
+    "esbuild": "^0.25.9",
+    "nodemon": "^3.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/inquirer": "^9.0.7",
+    "@types/fs-extra": "^11.0.4",
+    "@types/figlet": "^1.5.8",
+    "@typescript-eslint/eslint-plugin": "^6.13.1",
+    "@typescript-eslint/parser": "^6.13.1",
+    "eslint": "^8.54.0",
+    "eslint-config-prettier": "^10.0.0",
+    "eslint-plugin-prettier": "^5.0.1",
+    "prettier": "^3.1.0",
+    "jest": "^29.7.0",
+    "@types/jest": "^30.0.0",
+    "ts-jest": "^29.1.1",
+    "typescript": "^5.3.2"
+  },
+  "files": [
+    "dist/**/*",
+    "bin/**/*",
+    "templates/**/*",
+    "README.md",
+    "LICENSE"
+  ]
+} 

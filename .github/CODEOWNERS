@@ -1,0 +1,20 @@
+# Global code owners
+* @M-Chris
+
+# CLI core files require extra scrutiny
+/src/cli.ts @M-Chris
+/src/module-stub-generator.ts @M-Chris
+/src/commands/ @M-Chris
+/src/index.ts @M-Chris
+
+# Package and workflow changes
+/package.json @M-Chris
+/.github/ @M-Chris
+/tsconfig.json @M-Chris
+/eslint.config.mjs @M-Chris
+
+# Documentation changes
+/README.md @M-Chris
+
+# Binary and templates
+/bin/ @M-Chris 
