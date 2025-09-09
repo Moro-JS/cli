@@ -233,7 +233,7 @@ export class ProjectInitializer {
         zod: '^3.22.4',
       },
       devDependencies: {
-        '@morojs/cli': '^2.0.0',
+        '@morojs/cli': '^1.0.0',
         '@types/node': '^20.10.0',
         typescript: '^5.3.2',
         ...(config.features.includes('testing') && {

@@ -19,7 +19,7 @@ export async function runCLI(): Promise<void> {
   program
     .name('morojs-cli')
     .description('MoroJS Framework - Comprehensive Development Toolkit')
-    .version('2.0.0')
+    .version('1.0.0')
     .option('--verbose', 'Enable verbose logging')
     .option('--quiet', 'Suppress all output except errors')
     .hook('preAction', (thisCommand: any) => {
