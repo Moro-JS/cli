@@ -19,6 +19,7 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "clean": "rm -rf dist",
+    "prepare-release": "bash scripts/prepare-release.sh",
     "prepublish": "npm run build",
     "test": "jest",
     "test:watch": "jest --watch",

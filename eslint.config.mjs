@@ -49,9 +49,34 @@ export default [
   },
   {
     files: ['**/*.test.ts', '**/*.spec.ts', 'tests/**/*.ts'],
+    languageOptions: {
+      globals: {
+        describe: 'readonly',
+        test: 'readonly',
+        expect: 'readonly',
+        beforeEach: 'readonly',
+        afterEach: 'readonly',
+        beforeAll: 'readonly',
+        afterAll: 'readonly',
+        jest: 'readonly',
+      },
+    },
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
       'no-console': 'off',
+    },
+  },
+  {
+    files: ['*.config.js', '*.config.mjs', 'jest.config.js'],
+    languageOptions: {
+      globals: {
+        module: 'readonly',
+        require: 'readonly',
+        exports: 'readonly',
+      },
+    },
+    rules: {
+      'no-undef': 'off',
     },
   },
 ]; 
