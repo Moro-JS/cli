@@ -1,13 +1,13 @@
 name: Bug Report
 description: Report a bug in @morojs/cli
-title: "[Bug]: "
-labels: ["bug", "needs-triage"]
+title: '[Bug]: '
+labels: ['bug', 'needs-triage']
 body:
   - type: markdown
     attributes:
       value: |
         Thanks for taking the time to fill out this bug report for @morojs/cli!
-        
+
   - type: textarea
     id: what-happened
     attributes:
@@ -16,7 +16,7 @@ body:
       placeholder: Tell us what you see!
     validations:
       required: true
-      
+
   - type: textarea
     id: reproduction
     attributes:
@@ -28,7 +28,7 @@ body:
         3. See error
     validations:
       required: true
-      
+
   - type: textarea
     id: expected
     attributes:
@@ -36,14 +36,14 @@ body:
       description: A clear and concise description of what you expected to happen.
     validations:
       required: true
-      
+
   - type: textarea
     id: command-output
     attributes:
       label: Command Output
       description: Please copy and paste the full command output.
       render: shell
-      
+
   - type: dropdown
     id: command
     attributes:
@@ -63,34 +63,34 @@ body:
         - Other (please specify in additional context)
     validations:
       required: true
-      
+
   - type: input
     id: version
     attributes:
-      label: @morojs/cli Version
-      description: What version of @morojs/cli are you running?
-      placeholder: "2.0.0"
+      label: '@morojs/cli Version'
+      description: 'What version of @morojs/cli are you running?'
+      placeholder: '1.0.0'
     validations:
       required: true
-      
+
   - type: input
     id: node-version
     attributes:
       label: Node.js Version
       description: What version of Node.js are you running?
-      placeholder: "20.x.x"
+      placeholder: '20.x.x'
     validations:
       required: true
-      
+
   - type: input
     id: os
     attributes:
       label: Operating System
       description: What operating system are you using?
-      placeholder: "macOS 14.0, Windows 11, Ubuntu 22.04"
+      placeholder: 'macOS 14.0, Windows 11, Ubuntu 22.04'
     validations:
       required: true
-      
+
   - type: textarea
     id: project-info
     attributes:
@@ -100,9 +100,9 @@ body:
         - Project type: (new project, existing MoroJS project, etc.)
         - Runtime target: (node, vercel-edge, aws-lambda, cloudflare-workers)
         - Database: (postgresql, mysql, mongodb, etc.)
-      
+
   - type: textarea
     id: context
     attributes:
       label: Additional Context
-      description: Add any other context about the problem here, including screenshots if applicable. 
+      description: Add any other context about the problem here, including screenshots if applicable.

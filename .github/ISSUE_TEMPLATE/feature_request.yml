@@ -1,13 +1,13 @@
 name: Feature Request
 description: Suggest a feature for @morojs/cli
-title: "[Feature]: "
-labels: ["enhancement", "needs-triage"]
+title: '[Feature]: '
+labels: ['enhancement', 'needs-triage']
 body:
   - type: markdown
     attributes:
       value: |
         Thanks for taking the time to suggest a feature for @morojs/cli!
-        
+
   - type: textarea
     id: problem
     attributes:
@@ -16,7 +16,7 @@ body:
       placeholder: I'm frustrated when...
     validations:
       required: true
-      
+
   - type: textarea
     id: solution
     attributes:
@@ -25,7 +25,7 @@ body:
       placeholder: I would like to see...
     validations:
       required: true
-      
+
   - type: dropdown
     id: category
     attributes:
@@ -46,7 +46,7 @@ body:
         - Other
     validations:
       required: true
-      
+
   - type: textarea
     id: use-case
     attributes:
@@ -57,13 +57,13 @@ body:
         So that I can...
     validations:
       required: true
-      
+
   - type: textarea
     id: alternatives
     attributes:
       label: Alternatives Considered
       description: Describe any alternative solutions or features you've considered.
-      
+
   - type: dropdown
     id: priority
     attributes:
@@ -76,7 +76,7 @@ body:
         - Critical - Cannot use CLI without this
     validations:
       required: true
-      
+
   - type: checkboxes
     id: implementation
     attributes:
@@ -86,9 +86,9 @@ body:
         - label: I'm willing to submit a pull request for this feature
         - label: I can help with testing
         - label: I can help with documentation
-        
+
   - type: textarea
     id: additional-context
     attributes:
       label: Additional Context
-      description: Add any other context, screenshots, or examples about the feature request here. 
+      description: Add any other context, screenshots, or examples about the feature request here.

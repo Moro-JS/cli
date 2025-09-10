@@ -16,7 +16,6 @@ build/
 .env.production.local
 
 # IDE files
-.vscode/
 .idea/
 *.swp
 *.swo
@@ -40,4 +39,4 @@ pids/
 
 # Temporary files
 tmp/
-temp/ 
+temp/

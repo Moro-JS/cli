@@ -147,31 +147,37 @@ morojs-cli security:scan
 ## Project Templates
 
 ### API Server
+
 ```bash
 morojs-cli init my-api --template=api --runtime=node --database=postgresql
 ```
+
 Perfect for REST APIs, GraphQL servers, and backend services.
 
 ### Microservice
+
 ```bash
 morojs-cli init my-service --template=microservice --runtime=vercel-edge
 ```
+
 Lightweight services optimized for serverless deployment.
 
 ### Full-stack
+
 ```bash
 morojs-cli init my-app --template=fullstack --features=auth,websocket,docs
 ```
+
 Complete application with frontend integration support.
 
 ## Runtime Adapters
 
-| Runtime | Description | Deploy Command |
-|---------|-------------|----------------|
-| **Node.js** | Traditional server deployment | `node dist/index.js` |
-| **Vercel Edge** | Edge runtime with global distribution | `morojs-cli deploy vercel` |
-| **AWS Lambda** | Serverless functions with auto-scaling | `morojs-cli deploy lambda` |
-| **Cloudflare Workers** | Edge workers with V8 isolates | `morojs-cli deploy workers` |
+| Runtime                | Description                            | Deploy Command              |
+| ---------------------- | -------------------------------------- | --------------------------- |
+| **Node.js**            | Traditional server deployment          | `node dist/index.js`        |
+| **Vercel Edge**        | Edge runtime with global distribution  | `morojs-cli deploy vercel`  |
+| **AWS Lambda**         | Serverless functions with auto-scaling | `morojs-cli deploy lambda`  |
+| **Cloudflare Workers** | Edge workers with V8 isolates          | `morojs-cli deploy workers` |
 
 ## Database Support
 
@@ -197,6 +203,7 @@ Complete application with frontend integration support.
 ## Examples
 
 ### Create a User Management API
+
 ```bash
 # Initialize project
 morojs-cli init user-api --runtime=node --database=postgresql --features=auth,docs
@@ -215,6 +222,7 @@ npm run dev
 ```
 
 ### Serverless Microservice
+
 ```bash
 # Create lightweight service
 morojs-cli init payment-service --template=microservice --runtime=aws-lambda --database=redis
@@ -230,6 +238,7 @@ npm run deploy:lambda
 ```
 
 ### Full-stack Application
+
 ```bash
 # Create full-stack app
 morojs-cli init chat-app --template=fullstack --features=websocket,auth,docs --database=mongodb
@@ -297,4 +306,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Built with ❤️ by the MoroJS Team** 
+**Built with ❤️ by the MoroJS Team**

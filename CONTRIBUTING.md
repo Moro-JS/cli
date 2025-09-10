@@ -6,24 +6,27 @@ Thank you for your interest in contributing to the MoroJS CLI! This guide will h
 
 ### Prerequisites
 
-- Node.js 18+ 
+- Node.js 18+
 - npm or yarn
 - Git
 
 ### Getting Started
 
 1. **Fork and clone the repository**
+
    ```bash
    git clone https://github.com/YOUR_USERNAME/cli.git
    cd cli
    ```
 
 2. **Install dependencies**
+
    ```bash
    npm install
    ```
 
 3. **Build the project**
+
    ```bash
    npm run build
    ```
@@ -38,6 +41,7 @@ Thank you for your interest in contributing to the MoroJS CLI! This guide will h
 ### Making Changes
 
 1. **Create a feature branch**
+
    ```bash
    git checkout -b feature/your-feature-name
    ```
@@ -48,6 +52,7 @@ Thank you for your interest in contributing to the MoroJS CLI! This guide will h
    - Update documentation as needed
 
 3. **Test your changes**
+
    ```bash
    npm run lint
    npm run format
@@ -56,12 +61,13 @@ Thank you for your interest in contributing to the MoroJS CLI! This guide will h
    ```
 
 4. **Test CLI functionality**
+
    ```bash
    # Test basic commands
    node dist/cli.js --help
    node dist/cli.js examples
    node dist/cli.js middleware list
-   
+
    # Test module generation
    mkdir /tmp/test-cli && cd /tmp/test-cli
    node /path/to/cli/dist/cli.js generate test-module --features=websocket,database
@@ -135,16 +141,19 @@ chore: update dependencies
 ## Testing
 
 ### Unit Tests
+
 ```bash
 npm test
 ```
 
 ### Integration Tests
+
 ```bash
 npm run test:integration
 ```
 
 ### Manual CLI Testing
+
 ```bash
 # Build and test locally
 npm run build
@@ -205,4 +214,4 @@ Please note that this project is released with a [Code of Conduct](CODE_OF_CONDU
 
 ---
 
-**Built with ❤️ by the MoroJS Community** 
+**Built with ❤️ by the MoroJS Community**

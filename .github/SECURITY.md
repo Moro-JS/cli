@@ -2,9 +2,9 @@
 
 ## Supported Versions
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 1.x.x   | ✅ |
+| Version | Supported |
+| ------- | --------- |
+| 1.x.x   | ✅        |
 
 ## Reporting a Vulnerability
 
@@ -69,18 +69,21 @@ When using @morojs/cli:
 ## CLI-Specific Security Considerations
 
 ### File Generation
+
 - All generated files are created with appropriate permissions
 - No overwriting of system files
 - Path traversal protection in file operations
 
 ### Command Execution
+
 - No arbitrary command execution from user input
 - Subprocess execution is limited to known safe operations
 - Environment variable handling follows security best practices
 
 ### Template Security
+
 - Generated code follows security best practices
 - Database connection strings are properly parameterized
 - Authentication configurations use secure defaults
 
-For more details about MoroJS framework security, see the [MoroJS Security Documentation](https://morojs.com/docs/security). 
+For more details about MoroJS framework security, see the [MoroJS Security Documentation](https://morojs.com/docs/security).
