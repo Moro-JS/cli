@@ -206,7 +206,7 @@ Releases are automated through GitHub Actions:
 - **Documentation**: [MoroJS Docs](https://morojs.com)
 - **Issues**: [GitHub Issues](https://github.com/Moro-JS/cli/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/Moro-JS/cli/discussions)
-- **Discord**: [MoroJS Community](https://discord.gg/morojs)
+- **Discord**: [MoroJS Community](https://morojs.com/discord)
 
 ## Code of Conduct
 
@@ -214,4 +214,4 @@ Please note that this project is released with a [Code of Conduct](CODE_OF_CONDU
 
 ---
 
-**Built with ❤️ by the MoroJS Community**
+**Built with ❤️ by the MoroJS Team**

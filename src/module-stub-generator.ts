@@ -11,11 +11,11 @@ export class ModuleStubGenerator {
     const features = options.features ? options.features.split(',') : [];
     const middleware = options.middleware ? options.middleware.split(',') : [];
     const authRoles = options.authRoles ? options.authRoles.split(',') : [];
-    
+
     this.logger.info(`Generating advanced module: ${name}`, 'ModuleGenerator');
     this.logger.info(`Features: ${features.join(', ') || 'basic'}`, 'ModuleGenerator');
     this.logger.info(`Middleware: ${middleware.join(', ') || 'none'}`, 'ModuleGenerator');
-    
+
     await this.generateModule(name, features, {
       middleware,
       authRoles,
@@ -23,17 +23,20 @@ export class ModuleStubGenerator {
       withDocs: options.withDocs,
       database: options.database,
       template: options.template,
-      routes: options.routes
+      routes: options.routes,
     });
   }
 
   async listModules(): Promise<void> {
     this.logger.info('Discovering modules in current project...', 'ModuleList');
-    
+
     try {
       const modulesPath = join(process.cwd(), 'src', 'modules');
       if (!existsSync(modulesPath)) {
-        this.logger.info('No modules directory found. Create one with: morojs-cli module create <name>', 'ModuleList');
+        this.logger.info(
+          'No modules directory found. Create one with: morojs-cli module create <name>',
+          'ModuleList'
+        );
         return;
       }
 
@@ -42,7 +45,10 @@ export class ModuleStubGenerator {
       const moduleDirectories = modules.filter(dirent => dirent.isDirectory());
 
       if (moduleDirectories.length === 0) {
-        this.logger.info('No modules found. Create one with: morojs-cli module create <name>', 'ModuleList');
+        this.logger.info(
+          'No modules found. Create one with: morojs-cli module create <name>',
+          'ModuleList'
+        );
         return;
       }
 
@@ -51,20 +57,27 @@ export class ModuleStubGenerator {
         this.logger.info(`  ${module.name}`, 'ModuleList');
       }
     } catch (error) {
-      this.logger.error(`Failed to list modules: ${error instanceof Error ? error.message : 'Unknown error'}`, 'ModuleList');
+      this.logger.error(
+        `Failed to list modules: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'ModuleList'
+      );
     }
   }
 
-  async generateModule(name: string, features: string[] = [], advancedOptions: any = {}): Promise<void> {
-    const modulePath = join(process.cwd(), name);
-    
+  async generateModule(
+    name: string,
+    features: string[] = [],
+    advancedOptions: any = {}
+  ): Promise<void> {
+    const modulePath = join(process.cwd(), 'src', 'modules', name);
+
     // Create module directory
     await mkdir(modulePath, { recursive: true });
-    
+
     // Generate files based on features
     const hasWebSocket = features.includes('websocket');
     const hasDatabase = features.includes('database');
-    
+
     await Promise.all([
       this.writeTypes(modulePath, name),
       this.writeSchemas(modulePath, name),
@@ -72,11 +85,11 @@ export class ModuleStubGenerator {
       this.writeActions(modulePath, name, hasDatabase),
       this.writeRoutes(modulePath, name),
       hasWebSocket ? this.writeSockets(modulePath, name) : Promise.resolve(),
-      hasDatabase ? this.writeDatabase(modulePath, name) : Promise.resolve()
+      hasDatabase ? this.writeDatabase(modulePath, name) : Promise.resolve(),
     ]);
-    
+
     await this.writeIndex(modulePath, name, hasWebSocket);
-    
+
     this.logger.info(`Generated functional module: ${name}`, 'Generation');
     this.logger.info(`Features: ${features.join(', ') || 'basic'}`, 'Instructions');
     this.logger.info(`To get started:`, 'Instructions');
@@ -84,7 +97,10 @@ export class ModuleStubGenerator {
     this.logger.info(`  # Add your business logic to actions.ts`, 'Instructions');
     this.logger.info(`  # Configure routes in routes.ts`, 'Instructions');
     this.logger.info(`  # Update validation schemas in schemas.ts`, 'Instructions');
-    this.logger.info(`  # Test with: curl http://localhost:3000/api/v1.0.0/${name}/${name}s`, 'Instructions');
+    this.logger.info(
+      `  # Test with: curl http://localhost:3000/api/v1.0.0/${name}/${name}s`,
+      'Instructions'
+    );
   }
 
   private writeTypes(modulePath: string, name: string) {
@@ -110,7 +126,7 @@ export interface Update${className}Request {
   description?: string;
   active?: boolean;
 }`;
-    
+
     return writeFile(join(modulePath, 'types.ts'), content);
   }
 
@@ -161,7 +177,7 @@ export type Create${className}Request = z.infer<typeof Create${className}Schema>
 export type Update${className}Request = z.infer<typeof Update${className}Schema>;
 export type ${className}Params = z.infer<typeof ${className}ParamsSchema>;
 export type ${className}Query = z.infer<typeof ${className}QuerySchema>;`;
-    
+
     return writeFile(join(modulePath, 'schemas.ts'), content);
   }
 
@@ -173,7 +189,7 @@ export const config = {
   description: '${this.capitalize(name)} management module',
   tags: ['${name}', 'api']
 };`;
-    
+
     return writeFile(join(modulePath, 'config.ts'), content);
   }
 
@@ -204,17 +220,17 @@ export async function create${className}(data: Create${className}Request, databa
   };
 
   items.push(newItem);
-  
+
   // Intentional event emission
   await events.emit('${name}.created', { ${name}: newItem });
-  
+
   return newItem;
 }
 
 export async function update${className}(id: number, data: Update${className}Request, database: any, events: any): Promise<${className} | null> {
   const items = database.${name}s || [];
   const itemIndex = items.findIndex((item: ${className}) => item.id === id);
-  
+
   if (itemIndex === -1) {
     return null;
   }
@@ -223,49 +239,49 @@ export async function update${className}(id: number, data: Update${className}Req
   if (data.name !== undefined) updates.name = data.name;
   if (data.description !== undefined) updates.description = data.description;
   if (data.active !== undefined) updates.active = data.active;
-  
+
   if (Object.keys(updates).length === 0) {
     return items[itemIndex];
   }
-  
+
   updates.updatedAt = new Date();
   items[itemIndex] = { ...items[itemIndex], ...updates };
-  
+
   // Intentional event emission
   await events.emit('${name}.updated', { ${name}: items[itemIndex], changes: updates });
-  
+
   return items[itemIndex];
 }
 
 export async function delete${className}(id: number, database: any, events: any): Promise<boolean> {
   const items = database.${name}s || [];
   const itemIndex = items.findIndex((item: ${className}) => item.id === id);
-  
+
   if (itemIndex === -1) {
     return false;
   }
 
   const item = items[itemIndex];
   items.splice(itemIndex, 1);
-  
+
   // Intentional event emission
   await events.emit('${name}.deleted', { ${name}Id: id, ${name}: item });
-  
+
   return true;
 }`;
-    
+
     return writeFile(join(modulePath, 'actions.ts'), content);
   }
 
   private writeRoutes(modulePath: string, name: string) {
     const className = this.capitalize(name);
     const content = `// ${className} Routes - HTTP Handlers with Intelligent Routing
-import { 
-  getAll${className}s, 
-  get${className}ById, 
-  create${className}, 
-  update${className}, 
-  delete${className} 
+import {
+  getAll${className}s,
+  get${className}ById,
+  create${className},
+  update${className},
+  delete${className}
 } from './actions';
 import {
   ${className}QuerySchema,
@@ -287,26 +303,26 @@ export const routes = [
     tags: ['${name}', 'list'],
     handler: async (req: any, res: any) => {
       const items = await getAll${className}s(req.database);
-      
+
       // Apply query filtering
       let filteredItems = items;
       if (req.query.active !== undefined) {
         filteredItems = filteredItems.filter((item: any) => item.active === req.query.active);
       }
       if (req.query.search) {
-        filteredItems = filteredItems.filter((item: any) => 
+        filteredItems = filteredItems.filter((item: any) =>
           item.name.toLowerCase().includes(req.query.search.toLowerCase()) ||
           item.description.toLowerCase().includes(req.query.search.toLowerCase())
         );
       }
-      
+
       // Apply pagination
       const offset = req.query.offset || 0;
       const limit = req.query.limit || 10;
       const paginatedItems = filteredItems.slice(offset, offset + limit);
-      
-      return { 
-        success: true, 
+
+      return {
+        success: true,
         data: paginatedItems,
         meta: {
           total: filteredItems.length,
@@ -328,12 +344,12 @@ export const routes = [
     tags: ['${name}', 'get'],
     handler: async (req: any, res: any) => {
       const item = await get${className}ById(req.params.id, req.database);
-      
+
       if (!item) {
         res.status(404);
         return { success: false, error: '${className} not found' };
       }
-      
+
       return { success: true, data: item };
     }
   },
@@ -363,12 +379,12 @@ export const routes = [
     tags: ['${name}', 'update'],
     handler: async (req: any, res: any) => {
       const item = await update${className}(req.params.id, req.body, req.database, req.events);
-      
+
       if (!item) {
         res.status(404);
         return { success: false, error: '${className} not found' };
       }
-      
+
       return { success: true, data: item };
     }
   },
@@ -382,17 +398,17 @@ export const routes = [
     tags: ['${name}', 'delete'],
     handler: async (req: any, res: any) => {
       const success = await delete${className}(req.params.id, req.database, req.events);
-      
+
       if (!success) {
         res.status(404);
         return { success: false, error: '${className} not found' };
       }
-      
+
       return { success: true, message: '${className} deleted successfully' };
     }
   }
 ];`;
-    
+
     return writeFile(join(modulePath, 'routes.ts'), content);
   }
 
@@ -418,18 +434,18 @@ export const ${name}Sockets = [
     broadcast: true
   }
 ];`;
-    
+
     return writeFile(join(modulePath, 'sockets.ts'), content);
   }
 
   private async writeDatabase(modulePath: string, name: string) {
     const className = this.capitalize(name);
-    
+
     // Create database directory structure
     await mkdir(join(modulePath, 'database'), { recursive: true });
     await mkdir(join(modulePath, 'database', 'migrations'), { recursive: true });
     await mkdir(join(modulePath, 'database', 'seeds'), { recursive: true });
-    
+
     // Schema
     const schemaContent = `-- ${className} Module Database Schema
 CREATE TABLE IF NOT EXISTS ${name}s (
@@ -444,9 +460,9 @@ CREATE TABLE IF NOT EXISTS ${name}s (
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_${name}s_name ON ${name}s(name);
 CREATE INDEX IF NOT EXISTS idx_${name}s_created_at ON ${name}s(created_at);`;
-    
+
     await writeFile(join(modulePath, 'database', 'schema.sql'), schemaContent);
-    
+
     // Migration
     const migrationContent = `-- Migration 001: Create ${name}s table
 CREATE TABLE ${name}s (
@@ -461,42 +477,56 @@ CREATE TABLE ${name}s (
 -- Indexes for performance
 CREATE INDEX idx_${name}s_name ON ${name}s(name);
 CREATE INDEX idx_${name}s_created_at ON ${name}s(created_at);`;
-    
-    await writeFile(join(modulePath, 'database', 'migrations', '001_create_' + name + 's.sql'), migrationContent);
-    
+
+    await writeFile(
+      join(modulePath, 'database', 'migrations', '001_create_' + name + 's.sql'),
+      migrationContent
+    );
+
     // Seeds
     const seedContent = `-- Sample ${className} Data
 INSERT INTO ${name}s (name, description) VALUES
 ('Sample ${className} 1', 'This is a sample ${name} item'),
 ('Sample ${className} 2', 'Another sample ${name} item');`;
-    
-    return writeFile(join(modulePath, 'database', 'seeds', 'sample_' + name + 's.sql'), seedContent);
+
+    return writeFile(
+      join(modulePath, 'database', 'seeds', 'sample_' + name + 's.sql'),
+      seedContent
+    );
   }
 
   private writeIndex(modulePath: string, name: string, hasWebSocket: boolean) {
     const className = this.capitalize(name);
     const content = `// ${className} Module - Functional Structure
 import { config } from './config';
-import { routes } from './routes';${hasWebSocket ? `
-import { ${name}Sockets as sockets } from './sockets';` : ''}
+import { routes } from './routes';${
+      hasWebSocket
+        ? `
+import { ${name}Sockets as sockets } from './sockets';`
+        : ''
+    }
 import { defineModule } from '@morojs/moro';
 
 export default defineModule({
   name: '${name}',
   version: '1.0.0',
   config,
-  routes${hasWebSocket ? `,
-  sockets` : ''}
+  routes${
+    hasWebSocket
+      ? `,
+  sockets`
+      : ''
+  }
 });
 
 // Re-export types and actions for direct usage
 export * from './types';
 export * from './actions';`;
-    
+
     return writeFile(join(modulePath, 'index.ts'), content);
   }
 
   private capitalize(str: string): string {
     return str.charAt(0).toUpperCase() + str.slice(1);
   }
-} 
+}

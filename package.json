@@ -1,6 +1,6 @@
 {
   "name": "@morojs/cli",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "MoroJS Framework - Comprehensive Development Toolkit",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -10,9 +10,9 @@
   },
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
-      "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "require": "./dist/index.js"
     }
   },
   "scripts": {
@@ -74,6 +74,7 @@
     "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@morojs/moro": "^1.0.3",
     "@types/figlet": "^1.5.8",
     "@types/fs-extra": "^11.0.4",
     "@types/inquirer": "^9.0.7",

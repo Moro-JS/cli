@@ -81,31 +81,10 @@ export class DevTools {
     try {
       const outputDir = options.output || 'dist';
 
-      // Check if esbuild is available for faster builds
-      const hasEsbuild = existsSync(join(process.cwd(), 'node_modules', '.bin', 'esbuild'));
-
-      if (hasEsbuild) {
-        const esbuildArgs = [
-          'src/index.ts',
-          '--bundle',
-          '--platform=node',
-          '--target=node18',
-          '--format=esm',
-          '--outfile=' + join(outputDir, 'index.js'),
-          '--external:@morojs/moro',
-        ];
-
-        if (options.minify) {
-          esbuildArgs.push('--minify');
-        }
-
-        await spawnCommand('npx', ['esbuild', ...esbuildArgs]);
-        this.logger.info(`✅ Build completed! Output: ${outputDir}/`, 'Build');
-      } else {
-        // Fallback to TypeScript compiler
-        await runTerminalCmd('npx tsc');
-        this.logger.info(`✅ Build completed using TypeScript compiler!`, 'Build');
-      }
+      // Use TypeScript compiler for reliable CommonJS output
+      // esbuild bundling causes issues with dynamic requires in CommonJS dependencies
+      await runTerminalCmd('npx tsc');
+      this.logger.info(`✅ Build completed using TypeScript compiler!`, 'Build');
 
       // Generate runtime-specific files
       if (options.target && options.target !== 'node') {

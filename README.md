@@ -302,7 +302,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Documentation**: [https://morojs.com](https://morojs.com)
 - **GitHub**: [https://github.com/Moro-JS/cli](https://github.com/Moro-JS/cli)
 - **NPM**: [https://www.npmjs.com/package/@morojs/cli](https://www.npmjs.com/package/@morojs/cli)
-- **Discord**: [Join our community](https://discord.gg/morojs)
+- **Discord**: [Join our community](https://morojs.com/discord)
 
 ---
 

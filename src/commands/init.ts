@@ -9,6 +9,10 @@ import ora from 'ora';
 import boxen from 'boxen';
 import figlet from 'figlet';
 import { runTerminalCmd } from '../utils/terminal';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 export interface ProjectInitOptions {
   runtime?: 'node' | 'vercel-edge' | 'aws-lambda' | 'cloudflare-workers';
@@ -203,8 +207,8 @@ export class ProjectInitializer {
       name: projectName,
       version: '1.0.0',
       description: `MoroJS ${config.template} project`,
-      main: 'dist/index.js',
       type: 'module',
+      main: 'dist/index.js',
       scripts: {
         dev: 'morojs-cli dev',
         build: 'morojs-cli build',
@@ -220,7 +224,7 @@ export class ProjectInitializer {
         }),
       },
       dependencies: {
-        '@morojs/moro': '^1.0.0',
+        '@morojs/moro': await this.getLatestPackageVersion('@morojs/moro'),
         ...(config.database === 'postgresql' && { pg: '^8.11.3', '@types/pg': '^8.10.9' }),
         ...(config.database === 'mysql' && { mysql2: '^3.6.5' }),
         ...(config.database === 'mongodb' && { mongodb: '^6.3.0' }),
@@ -229,13 +233,18 @@ export class ProjectInitializer {
           'drizzle-orm': '^0.29.1',
           'drizzle-kit': '^0.20.6',
         }),
-        ...(config.features.includes('auth') && { jsonwebtoken: '^9.0.2', bcryptjs: '^2.4.3' }),
+        ...(config.features.includes('auth') && {
+          bcryptjs: '^2.4.3',
+        }),
         zod: '^3.22.4',
       },
       devDependencies: {
         '@morojs/cli': '^1.0.0',
         '@types/node': '^20.10.0',
         typescript: '^5.3.2',
+        ...(config.features.includes('auth') && {
+          '@types/bcryptjs': '^2.4.0',
+        }),
         ...(config.features.includes('testing') && {
           jest: '^29.7.0',
           '@types/jest': '^29.5.8',
@@ -291,18 +300,20 @@ export class ProjectInitializer {
     };
 
     const appContent = `// ${config.template.toUpperCase()} MoroJS Application
-import { ${runtimeImports[config.runtime as keyof typeof runtimeImports]}, logger } from '@morojs/moro';
+import { ${runtimeImports[config.runtime as keyof typeof runtimeImports]}, logger, initializeConfig } from '@morojs/moro';
 ${config.database !== 'none' ? `import { setupDatabase } from './database';` : ''}
 ${config.features.includes('auth') ? `import { setupAuth } from './middleware/auth';` : ''}
 
+// Initialize configuration from moro.config.js and environment variables
+const appConfig = initializeConfig();
+
 // Create MoroJS application with ${config.runtime} runtime
 const app = ${runtimeImports[config.runtime as keyof typeof runtimeImports]}({
-  runtime: { type: '${config.runtime}' },
   ${config.features.includes('cors') ? `cors: true,` : ''}
   ${config.features.includes('compression') ? `compression: true,` : ''}
   logger: {
-    level: process.env.LOG_LEVEL || 'info',
-    format: 'pretty'
+    level: appConfig.logging?.level || 'info',
+    format: appConfig.logging?.format || 'pretty'
   }
 });
 
@@ -352,11 +363,11 @@ ${
   config.runtime === 'node'
     ? `
 // Start server (Node.js only)
-const PORT = process.env.PORT || 3000;
-const HOST = process.env.HOST || 'localhost';
+const PORT = appConfig.server?.port || 3000;
+const HOST = appConfig.server?.host || 'localhost';
 
 app.listen(PORT, HOST, () => {
-  logger.info(\`\${config.template.charAt(0).toUpperCase() + config.template.slice(1)} server running!\`);
+  logger.info(\`${config.template.charAt(0).toUpperCase() + config.template.slice(1)} server running!\`);
   logger.info(\`HTTP: http://\${HOST}:\${PORT}\`);
   ${config.features.includes('websocket') ? `logger.info(\`🔌 WebSocket: ws://\${HOST}:\${PORT}\`);` : ''}
   ${config.features.includes('docs') ? `logger.info(\`Docs: http://\${HOST}:\${PORT}/docs\`);` : ''}
@@ -464,63 +475,257 @@ CLOUDFLARE_API_TOKEN=`
 
   private async generateMoroConfig(projectPath: string, config: any): Promise<void> {
     const configContent = `// MoroJS Configuration
-import { z } from 'zod';
+// Generated based on selected features: ${config.features.join(', ')}
+// Reference: https://morojs.com/docs/configuration
 
 export default {
+  // Server Configuration
   server: {
-    port: parseInt(process.env.PORT || '3000'),
-    host: process.env.HOST || 'localhost',
-    environment: process.env.NODE_ENV || 'development'
+    port: parseInt(process.env.PORT || process.env.MORO_PORT || '3000'),
+    host: process.env.HOST || process.env.MORO_HOST || 'localhost',
+    environment: process.env.NODE_ENV || process.env.MORO_ENV || 'development'${
+      config.runtime === 'node'
+        ? `,
+    maxConnections: parseInt(process.env.MAX_CONNECTIONS || process.env.MORO_MAX_CONNECTIONS || '1000'),
+    timeout: parseInt(process.env.REQUEST_TIMEOUT || process.env.MORO_TIMEOUT || '30000')`
+        : ''
+    }
   },
-  
-  ${
-    config.database !== 'none'
-      ? `database: {
-    ${config.database === 'postgresql' ? `url: process.env.DATABASE_URL` : ''}
-    ${config.database === 'mysql' ? `url: process.env.DATABASE_URL` : ''}
-    ${config.database === 'mongodb' ? `url: process.env.MONGODB_URI` : ''}
-    ${config.database === 'redis' ? `redis: { url: process.env.REDIS_URL }` : ''}
-  },`
+
+${
+  config.database !== 'none' && config.database !== 'sqlite'
+    ? `  // Database Configuration
+  database: {${
+    config.database === 'postgresql'
+      ? `
+    url: process.env.DATABASE_URL || process.env.MORO_DATABASE_URL`
+      : ''
+  }${
+    config.database === 'mysql'
+      ? `
+    mysql: {
+      host: process.env.MYSQL_HOST || process.env.MORO_MYSQL_HOST || 'localhost',
+      port: parseInt(process.env.MYSQL_PORT || process.env.MORO_MYSQL_PORT || '3306'),
+      database: process.env.MYSQL_DATABASE || process.env.MORO_MYSQL_DB,
+      username: process.env.MYSQL_USERNAME || process.env.MORO_MYSQL_USER,
+      password: process.env.MYSQL_PASSWORD || process.env.MORO_MYSQL_PASS,
+      connectionLimit: parseInt(process.env.MYSQL_CONNECTION_LIMIT || process.env.MORO_MYSQL_CONNECTIONS || '10'),
+      acquireTimeout: parseInt(process.env.MYSQL_ACQUIRE_TIMEOUT || '60000'),
+      timeout: parseInt(process.env.MYSQL_TIMEOUT || '60000')
+    }`
+      : ''
+  }${
+    config.database === 'mongodb'
+      ? `
+    url: process.env.DATABASE_URL || process.env.MONGODB_URI || process.env.MORO_DATABASE_URL || 'mongodb://localhost:27017/database'`
+      : ''
+  }${
+    config.database === 'redis' || config.features.includes('cache')
+      ? `,
+    redis: {
+      url: process.env.REDIS_URL || process.env.MORO_REDIS_URL || 'redis://localhost:6379',
+      maxRetries: parseInt(process.env.REDIS_MAX_RETRIES || process.env.MORO_REDIS_RETRIES || '3'),
+      retryDelay: parseInt(process.env.REDIS_RETRY_DELAY || process.env.MORO_REDIS_DELAY || '1000'),
+      keyPrefix: process.env.REDIS_KEY_PREFIX || process.env.MORO_REDIS_PREFIX || 'moro:'
+    }`
       : ''
   }
-  
-  logging: {
-    level: process.env.LOG_LEVEL || 'info',
-    format: 'pretty',
-    enableColors: true,
-    enableTimestamp: true
   },
-  
+
+`
+    : ''
+}  // Logging Configuration
+  logging: {
+    level: process.env.LOG_LEVEL || process.env.MORO_LOG_LEVEL || 'info',
+    format: process.env.LOG_FORMAT || process.env.MORO_LOG_FORMAT || (process.env.NODE_ENV === 'production' ? 'json' : 'pretty'),
+    enableColors: process.env.LOG_COLORS !== 'false' && process.env.NO_COLOR !== '1' && process.env.NODE_ENV !== 'production',
+    enableTimestamp: process.env.LOG_TIMESTAMP !== 'false',
+    enableContext: process.env.LOG_CONTEXT !== 'false'${
+      config.features.includes('monitoring')
+        ? `,
+    outputs: {
+      console: true,
+      file: {
+        enabled: process.env.LOG_FILE_ENABLED === 'true' || process.env.MORO_LOG_FILE === 'true' || process.env.NODE_ENV === 'production',
+        path: process.env.LOG_FILE_PATH || process.env.MORO_LOG_PATH || './logs/moro.log',
+        maxSize: '10MB',
+        maxFiles: 5
+      }${
+        config.features.includes('webhook-logging')
+          ? `,
+      webhook: {
+        enabled: !!process.env.LOG_WEBHOOK_URL || !!process.env.MORO_LOG_WEBHOOK_URL,
+        url: process.env.LOG_WEBHOOK_URL || process.env.MORO_LOG_WEBHOOK_URL,
+        headers: {
+          'Authorization': process.env.LOG_WEBHOOK_AUTH,
+          'Content-Type': 'application/json'
+        }
+      }`
+          : ''
+      }
+    }`
+        : ''
+    }
+  },
+
+  // Security Configuration
   security: {
     cors: {
-      enabled: true,
-      origin: process.env.NODE_ENV === 'production' ? false : '*'
+      enabled: ${config.features.includes('cors') ? "process.env.CORS_ENABLED !== 'false'" : 'false'},${
+        config.features.includes('cors')
+          ? `
+      origin: process.env.NODE_ENV === 'production'
+        ? (process.env.CORS_ORIGIN || process.env.MORO_CORS_ORIGIN || false)?.split(',')
+        : '*',
+      methods: (process.env.CORS_METHODS || process.env.MORO_CORS_METHODS || 'GET,POST,PUT,DELETE,PATCH,OPTIONS').split(','),
+      allowedHeaders: (process.env.CORS_HEADERS || process.env.MORO_CORS_HEADERS || 'Content-Type,Authorization').split(','),
+      credentials: process.env.CORS_CREDENTIALS === 'true'`
+          : ''
+      }
     },
     helmet: {
-      enabled: true
-    }
-  },
-  
-  performance: {
-    compression: {
-      enabled: true,
-      level: 6
-    },
-    circuitBreaker: {
-      enabled: ${config.features.includes('circuit-breaker')}
-    }
-  },
-  
-  modules: {
-    cache: {
-      enabled: ${config.features.includes('cache')},
-      defaultTtl: 300
-    },
+      enabled: process.env.HELMET_ENABLED !== 'false',
+      contentSecurityPolicy: process.env.NODE_ENV === 'production',
+      hsts: process.env.NODE_ENV === 'production',
+      noSniff: true,
+      frameguard: true
+    }${
+      config.features.includes('rate-limit')
+        ? `,
     rateLimit: {
-      enabled: ${config.features.includes('rate-limit')},
-      defaultRequests: 100,
-      defaultWindow: 60000
+      enabled: process.env.GLOBAL_RATE_LIMIT_ENABLED === 'true',
+      requests: parseInt(process.env.GLOBAL_RATE_LIMIT_REQUESTS || process.env.MORO_GLOBAL_RATE_REQUESTS || '1000'),
+      window: 60000 // 1 minute window
+    }`
+        : ''
     }
+  },
+
+${
+  config.features.includes('compression') ||
+  config.features.includes('circuit-breaker') ||
+  config.runtime === 'node'
+    ? `  // Performance Configuration
+  performance: {${
+    config.features.includes('compression')
+      ? `
+    compression: {
+      enabled: process.env.COMPRESSION_ENABLED !== 'false',
+      level: parseInt(process.env.COMPRESSION_LEVEL || process.env.MORO_COMPRESSION_LEVEL || '6'),
+      threshold: parseInt(process.env.COMPRESSION_THRESHOLD || process.env.MORO_COMPRESSION_THRESHOLD || '1024')
+    }${config.features.includes('circuit-breaker') || config.runtime === 'node' ? ',' : ''}`
+      : ''
+  }${
+    config.features.includes('circuit-breaker')
+      ? `
+    circuitBreaker: {
+      enabled: process.env.CIRCUIT_BREAKER_ENABLED !== 'false',
+      failureThreshold: parseInt(process.env.CIRCUIT_BREAKER_THRESHOLD || process.env.MORO_CB_THRESHOLD || '5'),
+      resetTimeout: parseInt(process.env.CIRCUIT_BREAKER_RESET_TIMEOUT || '60000'),
+      monitoringPeriod: parseInt(process.env.CIRCUIT_BREAKER_MONITORING_PERIOD || '10000')
+    }${config.runtime === 'node' ? ',' : ''}`
+      : ''
+  }${
+    config.runtime === 'node'
+      ? `
+    clustering: {
+      enabled: process.env.CLUSTERING_ENABLED === 'true',
+      workers: parseInt(process.env.CLUSTER_WORKERS || process.env.MORO_WORKERS) || require('os').cpus().length
+    }`
+      : ''
+  }
+  },
+
+`
+    : ''
+}  // Module Configuration
+  modules: {${
+    config.features.includes('cache')
+      ? `
+    cache: {
+      enabled: process.env.CACHE_ENABLED !== 'false' || process.env.MORO_CACHE_ENABLED !== 'false',
+      defaultTtl: parseInt(process.env.DEFAULT_CACHE_TTL || process.env.MORO_CACHE_TTL || '300'),
+      maxSize: parseInt(process.env.CACHE_MAX_SIZE || process.env.MORO_CACHE_SIZE || '1000'),
+      strategy: process.env.CACHE_STRATEGY || process.env.MORO_CACHE_STRATEGY || 'lru'
+    }${config.features.includes('rate-limit') || config.features.includes('validation') ? ',' : ''}`
+      : ''
+  }${
+    config.features.includes('rate-limit')
+      ? `
+    rateLimit: {
+      enabled: process.env.RATE_LIMIT_ENABLED !== 'false' || process.env.MORO_RATE_LIMIT_ENABLED !== 'false',
+      defaultRequests: parseInt(process.env.DEFAULT_RATE_LIMIT_REQUESTS || process.env.MORO_RATE_LIMIT_REQUESTS || '100'),
+      defaultWindow: parseInt(process.env.DEFAULT_RATE_LIMIT_WINDOW || process.env.MORO_RATE_LIMIT_WINDOW || '60000'),
+      skipSuccessfulRequests: process.env.RATE_LIMIT_SKIP_SUCCESS === 'true',
+      skipFailedRequests: process.env.RATE_LIMIT_SKIP_FAILED === 'true'
+    }${config.features.includes('validation') ? ',' : ''}`
+      : ''
+  }${
+    config.features.includes('validation')
+      ? `
+    validation: {
+      enabled: process.env.VALIDATION_ENABLED !== 'false' || process.env.MORO_VALIDATION_ENABLED !== 'false',
+      stripUnknown: process.env.VALIDATION_STRIP_UNKNOWN !== 'false',
+      abortEarly: process.env.VALIDATION_ABORT_EARLY === 'true'
+    }`
+      : ''
+  }
+  }${
+    config.features.includes('service-discovery')
+      ? `,
+
+  // Service Discovery Configuration
+  serviceDiscovery: {
+    enabled: process.env.SERVICE_DISCOVERY_ENABLED === 'true' || process.env.MORO_SERVICE_DISCOVERY === 'true',
+    type: process.env.DISCOVERY_TYPE || process.env.MORO_DISCOVERY_TYPE || 'memory',
+    consulUrl: process.env.CONSUL_URL || process.env.MORO_CONSUL_URL || 'http://localhost:8500',
+    kubernetesNamespace: process.env.K8S_NAMESPACE || process.env.MORO_K8S_NAMESPACE || 'default',
+    healthCheckInterval: parseInt(process.env.HEALTH_CHECK_INTERVAL || process.env.MORO_HEALTH_INTERVAL || '30000'),
+    retryAttempts: parseInt(process.env.DISCOVERY_RETRY_ATTEMPTS || process.env.MORO_DISCOVERY_RETRIES || '3')
+  }`
+      : ''
+  }${
+    config.features.some((f: string) => ['stripe', 'paypal', 'smtp', 'email'].includes(f))
+      ? `,
+
+  // External Services Configuration
+  external: {${
+    config.features.includes('stripe')
+      ? `
+    // Stripe Configuration (uncomment and configure)
+    // stripe: {
+    //   secretKey: process.env.STRIPE_SECRET_KEY || process.env.MORO_STRIPE_SECRET,
+    //   publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || process.env.MORO_STRIPE_PUBLIC,
+    //   webhookSecret: process.env.STRIPE_WEBHOOK_SECRET || process.env.MORO_STRIPE_WEBHOOK,
+    //   apiVersion: process.env.STRIPE_API_VERSION || process.env.MORO_STRIPE_VERSION || '2023-10-16'
+    // }${config.features.includes('paypal') || config.features.includes('smtp') ? ',' : ''}`
+      : ''
+  }${
+    config.features.includes('paypal')
+      ? `
+    // PayPal Configuration (uncomment and configure)
+    // paypal: {
+    //   clientId: process.env.PAYPAL_CLIENT_ID || process.env.MORO_PAYPAL_CLIENT,
+    //   clientSecret: process.env.PAYPAL_CLIENT_SECRET || process.env.MORO_PAYPAL_SECRET,
+    //   webhookId: process.env.PAYPAL_WEBHOOK_ID,
+    //   environment: process.env.PAYPAL_ENVIRONMENT || process.env.MORO_PAYPAL_ENV || 'sandbox'
+    // }${config.features.includes('smtp') ? ',' : ''}`
+      : ''
+  }${
+    config.features.includes('smtp') || config.features.includes('email')
+      ? `
+    // SMTP Configuration (uncomment and configure)
+    // smtp: {
+    //   host: process.env.SMTP_HOST || process.env.MORO_SMTP_HOST,
+    //   port: parseInt(process.env.SMTP_PORT || process.env.MORO_SMTP_PORT || '587'),
+    //   secure: process.env.SMTP_SECURE === 'true',
+    //   username: process.env.SMTP_USERNAME || process.env.MORO_SMTP_USER,
+    //   password: process.env.SMTP_PASSWORD || process.env.MORO_SMTP_PASS
+    // }`
+      : ''
+  }
+  }`
+      : ''
   }
 };`;
 
@@ -687,6 +892,28 @@ npm start
 - **Health Check**: \`GET /health\`
 - **Welcome**: \`GET /\`
 ${config.features.includes('docs') ? `- **API Docs**: \`GET /docs\`` : ''}
+
+## Configuration
+
+This project includes a comprehensive configuration system:
+
+- **\`moro.config.js\`** - Feature-based configuration with production-ready defaults
+- **\`.env\`** - Environment variables for development
+- **\`.env.example\`** - Environment variables template
+
+### Production Setup
+
+1. Set up production environment variables:
+   \`\`\`bash
+   cp .env.example .env.production
+   # Edit .env.production with your production values
+   \`\`\`
+
+2. The configuration automatically adapts to production when \`NODE_ENV=production\`:
+   - **Performance**: Compression, clustering, circuit breakers
+   - **Security**: CORS, Helmet, rate limiting, SSL
+   - **Monitoring**: Structured logging, file outputs
+   - **Scalability**: Redis caching, connection pooling
 
 ## Database
 
@@ -981,25 +1208,39 @@ volumes:
   }
 
   private async generateDatabaseSetup(projectPath: string, config: any): Promise<void> {
+    // Fix the adapter name for PostgreSQL (should be PostgreSQLAdapter, not PostgresqlAdapter)
+    const getAdapterName = (dbType: string) => {
+      if (dbType === 'postgresql') return 'PostgreSQLAdapter';
+      return dbType.charAt(0).toUpperCase() + dbType.slice(1) + 'Adapter';
+    };
+
+    const adapterName = getAdapterName(config.database);
+
     const dbSetupContent = `// Database Setup and Configuration
-import { ${config.database.charAt(0).toUpperCase() + config.database.slice(1)}Adapter } from '@morojs/moro';
+import { ${adapterName} } from '@morojs/moro';
 import { createFrameworkLogger } from '@morojs/moro';
 
 const logger = createFrameworkLogger('Database');
 
 export async function setupDatabase(app: any): Promise<void> {
   try {
-    const adapter = new ${config.database.charAt(0).toUpperCase() + config.database.slice(1)}Adapter({
+    const adapter = new ${adapterName}({
       ${
-        config.database === 'postgresql' || config.database === 'mysql'
+        config.database === 'postgresql'
           ? `
-      url: process.env.DATABASE_URL,
-      host: process.env.${config.database.toUpperCase()}_HOST,
-      port: parseInt(process.env.${config.database.toUpperCase()}_PORT || '${config.database === 'postgresql' ? '5432' : '3306'}'),
-      username: process.env.${config.database.toUpperCase()}_USER,
-      password: process.env.${config.database.toUpperCase()}_PASSWORD,
-      database: process.env.${config.database.toUpperCase()}_${config.database === 'postgresql' ? 'DB' : 'DATABASE'}`
-          : ''
+      host: process.env.POSTGRESQL_HOST || 'localhost',
+      port: parseInt(process.env.POSTGRESQL_PORT || '5432'),
+      user: process.env.POSTGRESQL_USER || 'postgres',
+      password: process.env.POSTGRESQL_PASSWORD,
+      database: process.env.POSTGRESQL_DATABASE`
+          : config.database === 'mysql'
+            ? `
+      host: process.env.MYSQL_HOST || 'localhost',
+      port: parseInt(process.env.MYSQL_PORT || '3306'),
+      user: process.env.MYSQL_USER || 'mysql',
+      password: process.env.MYSQL_PASSWORD,
+      database: process.env.MYSQL_DATABASE`
+            : ''
       }
       ${
         config.database === 'mongodb'
@@ -1019,11 +1260,12 @@ export async function setupDatabase(app: any): Promise<void> {
 
     await adapter.connect();
     app.database(adapter);
-    
+
     logger.info('✅ Database connected successfully', 'Database');
   } catch (error) {
-    logger.error('❌ Database connection failed:', error, 'Database');
-    throw error;
+    logger.error('❌ Database connection failed: ' + String(error), 'Database');
+    logger.warn('⚠️  App will continue without database connection', 'Database');
+    // Don't throw - let the app continue without database
   }
 }`;
 
@@ -1031,52 +1273,122 @@ export async function setupDatabase(app: any): Promise<void> {
   }
 
   private async generateAuthMiddleware(projectPath: string): Promise<void> {
-    const authContent = `// Authentication Middleware
-import { auth } from '@morojs/moro';
-import jwt from 'jsonwebtoken';
+    const authContent = `// Auth.js Authentication Middleware
+import { builtInMiddleware, providers } from '@morojs/moro';
 import bcrypt from 'bcryptjs';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
-
 export async function setupAuth(app: any): Promise<void> {
-  // JWT Authentication middleware
-  app.use(auth({
-    secret: JWT_SECRET,
-    algorithms: ['HS256'],
-    optional: true // Make auth optional by default
+  // Configure Auth.js providers
+  app.use(builtInMiddleware.auth({
+    secret: process.env.NEXTAUTH_SECRET || process.env.AUTH_SECRET || 'your-secret-key-change-in-production',
+    providers: [
+      // Credentials provider for email/password authentication
+      providers.credentials({
+        name: 'credentials',
+        credentials: {
+          email: { label: 'Email', type: 'email', placeholder: 'user@example.com' },
+          password: { label: 'Password', type: 'password' }
+        },
+        authorize: async (credentials) => {
+          if (!credentials?.email || !credentials?.password) {
+            return null;
+          }
+
+          // TODO: Replace with actual database lookup
+          // const user = await getUserByEmail(credentials.email);
+          // if (user && await bcrypt.compare(credentials.password, user.password)) {
+          //   return { id: user.id, name: user.name, email: user.email };
+          // }
+
+          // Mock implementation for development
+          if (credentials.email === 'admin@example.com' && credentials.password === 'password') {
+            return {
+              id: '1',
+              name: 'Admin User',
+              email: 'admin@example.com',
+              role: 'admin'
+            };
+          }
+
+          return null;
+        }
+      }),
+
+      // Uncomment and configure OAuth providers as needed:
+
+      // providers.google({
+      //   clientId: process.env.GOOGLE_CLIENT_ID!,
+      //   clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      // }),
+
+      // providers.github({
+      //   clientId: process.env.GITHUB_CLIENT_ID!,
+      //   clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+      // }),
+
+      // providers.discord({
+      //   clientId: process.env.DISCORD_CLIENT_ID!,
+      //   clientSecret: process.env.DISCORD_CLIENT_SECRET!,
+      // }),
+    ],
+    session: {
+      strategy: 'jwt', // Use JWT tokens for sessions
+      maxAge: 30 * 24 * 60 * 60, // 30 days
+    },
+    pages: {
+      signIn: '/auth/signin',
+      signOut: '/auth/signout',
+      error: '/auth/error',
+    },
+    callbacks: {
+      jwt: async ({ token, user }) => {
+        if (user) {
+          token.role = user.role;
+        }
+        return token;
+      },
+      session: async ({ session, token }) => {
+        if (token?.role) {
+          session.user.role = token.role;
+        }
+        return session;
+      },
+    },
+    debug: process.env.NODE_ENV === 'development',
   }));
 
-  // Login endpoint
-  app.post('/auth/login', async (req: any, res: any) => {
-    const { email, password } = req.body;
-    
-    // TODO: Implement user lookup from database
-    // const user = await getUserByEmail(email);
-    // const isValid = await bcrypt.compare(password, user.password);
-    
-    // Mock implementation
-    if (email === 'admin@example.com' && password === 'password') {
-      const token = jwt.sign(
-        { userId: 1, email, roles: ['admin'] },
-        JWT_SECRET,
-        { expiresIn: process.env.JWT_EXPIRES_IN || '24h' }
-      );
-      
-      return { success: true, token, user: { id: 1, email, roles: ['admin'] } };
-    }
-    
+  // Protected route example
+  app.get('/api/profile', async (req: any, res: any) => {
+    // Auth.js automatically adds auth object to request
+    if (!req.auth?.isAuthenticated) {
     res.status(401);
-    return { success: false, error: 'Invalid credentials' };
+      return { success: false, error: 'Authentication required' };
+    }
+
+    return {
+      success: true,
+      user: req.auth.user,
+      session: req.auth.session
+    };
   });
 
-  // Protected route example
-  app.get('/auth/profile', async (req: any, res: any) => {
-    if (!req.user) {
+  // Admin-only route example
+  app.get('/api/admin', async (req: any, res: any) => {
+    if (!req.auth?.isAuthenticated) {
       res.status(401);
       return { success: false, error: 'Authentication required' };
     }
-    
-    return { success: true, user: req.user };
+
+    if (req.auth.user?.role !== 'admin') {
+      res.status(403);
+      return { success: false, error: 'Admin access required' };
+    }
+
+    return {
+      success: true,
+      message: 'Admin access granted',
+      user: req.auth.user
+    };
   });
 }`;
 
@@ -1175,5 +1487,23 @@ ${config.features.map((f: string) => `   • ${f}`).join('\n')}
         }
       )
     );
+  }
+
+  /**
+   * Fetch the latest version of a package from NPM registry
+   */
+  private async getLatestPackageVersion(packageName: string): Promise<string> {
+    try {
+      const { stdout } = await execAsync(`npm view ${packageName} version`);
+      const version = stdout.trim();
+      return `^${version}`;
+    } catch (error) {
+      this.logger.warn(`Failed to fetch latest version for ${packageName}, using fallback`, 'Init');
+      // Fallback to a reasonable default if npm view fails
+      if (packageName === '@morojs/moro') {
+        return '^1.1.0';
+      }
+      return '^1.1.0';
+    }
   }
 }
