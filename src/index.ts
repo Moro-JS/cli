@@ -2,4 +2,4 @@
 
 export { ModuleStubGenerator } from './module-stub-generator';
 export { runModuleStubGenerator } from './cli';
-export { createFrameworkLogger } from './logger'; 
+export { createFrameworkLogger } from './logger';

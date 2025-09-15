@@ -11,15 +11,13 @@ export function createFrameworkLogger(component: string) {
         return `${timestamp} [${comp || component}] ${level}: ${message}`;
       })
     ),
-    transports: [
-      new transports.Console()
-    ]
+    transports: [new transports.Console()],
   });
 
   return {
     info: (message: string, comp?: string) => logger.info(message, { component: comp }),
     error: (message: string, comp?: string) => logger.error(message, { component: comp }),
     warn: (message: string, comp?: string) => logger.warn(message, { component: comp }),
-    debug: (message: string, comp?: string) => logger.debug(message, { component: comp })
+    debug: (message: string, comp?: string) => logger.debug(message, { component: comp }),
   };
-} 
+}

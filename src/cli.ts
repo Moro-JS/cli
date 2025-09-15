@@ -2,6 +2,8 @@
 
 // MoroJS CLI - Comprehensive Development Toolkit
 import { Command } from 'commander';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { createFrameworkLogger } from './logger';
 import { ModuleStubGenerator } from './module-stub-generator';
 import { ProjectInitializer } from './commands/init';
@@ -13,13 +15,18 @@ import { MiddlewareManager } from './commands/middleware';
 
 const logger = createFrameworkLogger('MoroJS-CLI');
 
+// Read version from package.json
+const packageJsonPath = join(__dirname, '..', 'package.json');
+const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+const version = packageJson.version;
+
 export async function runCLI(): Promise<void> {
   const program = new Command();
 
   program
     .name('morojs-cli')
     .description('MoroJS Framework - Comprehensive Development Toolkit')
-    .version('1.0.0')
+    .version(version)
     .option('--verbose', 'Enable verbose logging')
     .option('--quiet', 'Suppress all output except errors')
     .hook('preAction', (thisCommand: any) => {
@@ -47,6 +54,16 @@ export async function runCLI(): Promise<void> {
     .option(
       '-f, --features <features>',
       'Comma-separated features (auth,cors,helmet,compression,websocket,docs)'
+    )
+    .option(
+      '-w, --websocket <adapter>',
+      'WebSocket adapter (auto-detect|socket.io|ws|none)',
+      'auto-detect'
+    )
+    .option(
+      '-v, --validation <library>',
+      'Validation library (zod|joi|yup|class-validator|multiple)',
+      'zod'
     )
     .option('-t, --template <template>', 'Project template (api|fullstack|microservice)', 'api')
     .option('--skip-git', 'Skip Git repository initialization')
@@ -438,7 +455,9 @@ MoroJS CLI Examples:
 
 Project Initialization:
   morojs-cli init my-api --runtime=node --database=postgresql --features=auth,cors,docs
-  morojs-cli init my-edge-api --runtime=vercel-edge --template=microservice
+  morojs-cli init my-chat-app --features=websocket,auth --websocket=socket.io --validation=joi
+  morojs-cli init my-edge-api --runtime=vercel-edge --template=microservice --websocket=ws --validation=yup
+  morojs-cli init my-enterprise --validation=multiple --features=auth,websocket,docs
 
 Module Creation:
   morojs-cli module create users --features=database,auth,cache --with-tests

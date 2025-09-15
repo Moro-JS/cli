@@ -18,6 +18,8 @@ export interface ProjectInitOptions {
   runtime?: 'node' | 'vercel-edge' | 'aws-lambda' | 'cloudflare-workers';
   database?: 'mysql' | 'postgresql' | 'sqlite' | 'mongodb' | 'redis' | 'drizzle';
   features?: string;
+  websocket?: 'auto-detect' | 'socket.io' | 'ws' | 'none';
+  validation?: 'zod' | 'joi' | 'yup' | 'class-validator' | 'multiple';
   template?: 'api' | 'fullstack' | 'microservice';
   skipGit?: boolean;
   skipInstall?: boolean;
@@ -117,7 +119,7 @@ export class ProjectInitializer {
 
   private async gatherProjectConfig(
     options: ProjectInitOptions
-  ): Promise<Required<ProjectInitOptions> & { features: string[] }> {
+  ): Promise<Required<ProjectInitOptions> & { features: string[]; websocketAdapter: string }> {
     const questions = [];
 
     if (!options.runtime) {
@@ -188,11 +190,59 @@ export class ProjectInitializer {
 
     const answers = await inquirer.prompt(questions);
 
+    const selectedFeatures = options.features
+      ? options.features.split(',')
+      : answers.features || [];
+
+    // Ask for WebSocket adapter if WebSocket support is selected and not provided via CLI
+    let websocketAdapter = options.websocket || 'auto-detect';
+    if (selectedFeatures.includes('websocket') && !options.websocket) {
+      const wsQuestion = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'websocketAdapter',
+          message: 'Select WebSocket implementation:',
+          choices: [
+            { name: 'Auto-detect (tries socket.io then ws)', value: 'auto-detect' },
+            { name: 'Socket.IO (feature-rich, rooms, namespaces)', value: 'socket.io' },
+            { name: 'Native ws (lightweight, standards-compliant)', value: 'ws' },
+            { name: '❌ Skip WebSocket dependencies (configure manually)', value: 'none' },
+          ],
+          default: 'auto-detect',
+        },
+      ]);
+      websocketAdapter = wsQuestion.websocketAdapter;
+    }
+
+    // Ask for validation library preference if not provided via CLI
+    let validationLibrary = options.validation || 'zod';
+    if (!options.validation) {
+      const validationQuestion = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'validation',
+          message: 'Select validation library:',
+          choices: [
+            { name: 'Zod (default, type-safe, recommended)', value: 'zod' },
+            { name: 'Joi (mature, extensive features)', value: 'joi' },
+            { name: 'Yup (simple, popular)', value: 'yup' },
+            { name: 'Class Validator (decorators, TypeScript classes)', value: 'class-validator' },
+            { name: 'Multiple libraries (install all for flexibility)', value: 'multiple' },
+          ],
+          default: 'zod',
+        },
+      ]);
+      validationLibrary = validationQuestion.validation;
+    }
+
     return {
       runtime: options.runtime || answers.runtime,
       database: options.database || answers.database,
       template: options.template || answers.template,
-      features: options.features ? options.features.split(',') : answers.features || [],
+      features: selectedFeatures,
+      websocket: websocketAdapter,
+      websocketAdapter,
+      validation: validationLibrary,
       skipGit: options.skipGit || false,
       skipInstall: options.skipInstall || false,
     };
@@ -224,7 +274,7 @@ export class ProjectInitializer {
         }),
       },
       dependencies: {
-        '@morojs/moro': await this.getLatestPackageVersion('@morojs/moro'),
+        '@morojs/moro': 'file:../MoroJS', // Use local development version
         ...(config.database === 'postgresql' && { pg: '^8.11.3', '@types/pg': '^8.10.9' }),
         ...(config.database === 'mysql' && { mysql2: '^3.6.5' }),
         ...(config.database === 'mongodb' && { mongodb: '^6.3.0' }),
@@ -239,7 +289,43 @@ export class ProjectInitializer {
         ...(config.features.includes('docs') && {
           'swagger-ui-dist': '^5.11.0',
         }),
-        zod: '^3.22.4',
+        // WebSocket dependencies based on selected adapter
+        ...(config.features.includes('websocket') &&
+          config.websocketAdapter === 'socket.io' && {
+            'socket.io': '^4.8.1',
+          }),
+        ...(config.features.includes('websocket') &&
+          config.websocketAdapter === 'ws' && {
+            ws: '^8.18.0',
+          }),
+        ...(config.features.includes('websocket') &&
+          config.websocketAdapter === 'auto-detect' && {
+            'socket.io': '^4.8.1',
+            ws: '^8.18.0',
+          }),
+        // Validation library dependencies
+        ...(config.validation === 'zod' && {
+          zod: '^3.22.4',
+        }),
+        ...(config.validation === 'joi' && {
+          joi: '^17.12.0',
+        }),
+        ...(config.validation === 'yup' && {
+          yup: '^1.4.0',
+        }),
+        ...(config.validation === 'class-validator' && {
+          'class-validator': '^0.14.1',
+          'class-transformer': '^0.5.1',
+          'reflect-metadata': '^0.2.1',
+        }),
+        ...(config.validation === 'multiple' && {
+          zod: '^3.22.4',
+          joi: '^17.12.0',
+          yup: '^1.4.0',
+          'class-validator': '^0.14.1',
+          'class-transformer': '^0.5.1',
+          'reflect-metadata': '^0.2.1',
+        }),
       },
       devDependencies: {
         '@morojs/cli': '^1.0.0',
@@ -255,6 +341,15 @@ export class ProjectInitializer {
           'ts-jest': '^29.1.1',
           supertest: '^6.3.3',
           '@types/supertest': '^2.0.16',
+        }),
+        // WebSocket TypeScript types
+        ...(config.features.includes('websocket') &&
+          (config.websocketAdapter === 'ws' || config.websocketAdapter === 'auto-detect') && {
+            '@types/ws': '^8.5.10',
+          }),
+        // Validation library TypeScript types
+        ...((config.validation === 'joi' || config.validation === 'multiple') && {
+          '@types/joi': '^17.2.3',
         }),
       },
       engines: {
@@ -303,9 +398,10 @@ export class ProjectInitializer {
     };
 
     const appContent = `// ${config.template.toUpperCase()} MoroJS Application
-import { ${runtimeImports[config.runtime as keyof typeof runtimeImports]}, logger, initializeConfig } from '@morojs/moro';
+import { ${runtimeImports[config.runtime as keyof typeof runtimeImports]}, logger, initializeConfig${config.features.includes('websocket') && config.websocketAdapter !== 'none' ? ', SocketIOAdapter, WSAdapter' : ''} } from '@morojs/moro';
 ${config.database !== 'none' ? `import { setupDatabase } from './database/index.js';` : ''}
 ${config.features.includes('auth') ? `import { setupAuth } from './middleware/auth.js';` : ''}
+${config.features.includes('websocket') ? `import { setupWebSockets } from './websockets/index.js';` : ''}
 
 // Initialize configuration from moro.config.js and environment variables
 const appConfig = initializeConfig();
@@ -314,6 +410,7 @@ const appConfig = initializeConfig();
 const app = ${runtimeImports[config.runtime as keyof typeof runtimeImports]}({
   ${config.features.includes('cors') ? `cors: true,` : ''}
   ${config.features.includes('compression') ? `compression: true,` : ''}
+  ${config.features.includes('websocket') && config.websocketAdapter !== 'none' ? this.getWebSocketConfigString(config.websocketAdapter) : ''}
   logger: {
     level: appConfig.logging?.level || 'info',
     format: appConfig.logging?.format || 'pretty'
@@ -325,6 +422,9 @@ ${config.database !== 'none' ? `await setupDatabase(app);` : ''}
 
 // Auth setup
 ${config.features.includes('auth') ? `await setupAuth(app);` : ''}
+
+// WebSocket setup
+${config.features.includes('websocket') ? `await setupWebSockets(app);` : ''}
 
 // Health check endpoint
 app.get('/health')
@@ -489,7 +589,7 @@ const HOST = appConfig.server?.host || 'localhost';
 app.listen(PORT, HOST, () => {
   logger.info(\`${config.template.charAt(0).toUpperCase() + config.template.slice(1)} server running!\`);
   logger.info(\`HTTP: http://\${HOST}:\${PORT}\`);
-  ${config.features.includes('websocket') ? `logger.info(\`🔌 WebSocket: ws://\${HOST}:\${PORT}\`);` : ''}
+  ${config.features.includes('websocket') ? `logger.info(\`WebSocket: ws://\${HOST}:\${PORT}\`);` : ''}
   ${config.features.includes('docs') ? `logger.info(\`Docs: http://\${HOST}:\${PORT}/docs\`);` : ''}
 });
 `
@@ -502,6 +602,34 @@ export default app.getHandler();
 export { app };`;
 
     await writeFile(join(projectPath, 'src', 'index.ts'), appContent);
+  }
+
+  private getWebSocketConfigString(adapter: string): string {
+    switch (adapter) {
+      case 'socket.io':
+        return `websocket: {
+    adapter: new SocketIOAdapter(),
+    compression: true,
+    options: {
+      cors: { origin: '*' },
+      path: '/socket.io/'
+    }
+  },`;
+      case 'ws':
+        return `websocket: {
+    adapter: new WSAdapter(),
+    options: {
+      path: '/ws',
+      maxPayloadLength: 100 * 1024 * 1024 // 100MB
+    }
+  },`;
+      case 'auto-detect':
+      default:
+        return `websocket: {
+    enabled: true,
+    compression: true
+  },`;
+    }
   }
 
   private async generateEnvFiles(projectPath: string, config: any): Promise<void> {
@@ -1304,10 +1432,20 @@ volumes:
 
   private async generateProjectStructure(projectPath: string, config: any): Promise<void> {
     // Create directory structure
-    const directories = ['src/modules', 'src/middleware', 'src/types', 'src/utils'];
+    const directories = [
+      'src/modules',
+      'src/middleware',
+      'src/types',
+      'src/utils',
+      'src/validation',
+    ];
 
     if (config.database !== 'none') {
       directories.push('src/database', 'src/database/migrations', 'src/database/seeds');
+    }
+
+    if (config.features.includes('websocket')) {
+      directories.push('src/websockets');
     }
 
     if (config.features.includes('testing')) {
@@ -1327,6 +1465,14 @@ volumes:
     if (config.features.includes('auth')) {
       await this.generateAuthMiddleware(projectPath);
     }
+
+    // Generate WebSocket setup if WebSocket is enabled
+    if (config.features.includes('websocket')) {
+      await this.generateWebSocketSetup(projectPath, config);
+    }
+
+    // Generate validation examples based on selected library
+    await this.generateValidationExamples(projectPath, config);
 
     // Generate test setup if testing is enabled
     if (config.features.includes('testing')) {
@@ -1562,6 +1708,471 @@ export async function setupAuth(app: any): Promise<void> {
     await writeFile(join(projectPath, 'src', 'middleware', 'auth.ts'), authContent);
   }
 
+  private async generateWebSocketSetup(projectPath: string, config: any): Promise<void> {
+    const wsSetupContent = `// WebSocket Setup and Configuration
+// Demonstrates ${config.websocketAdapter === 'auto-detect' ? 'auto-detection of' : config.websocketAdapter} adapter usage
+import { createFrameworkLogger } from '@morojs/moro';
+
+const logger = createFrameworkLogger('WebSocket');
+
+export async function setupWebSockets(app: any): Promise<void> {
+  try {
+    // WebSocket adapter is configured in main app initialization
+    // This function can be used for additional WebSocket setup
+
+    ${this.getWebSocketExampleCode(config.websocketAdapter)}
+
+    logger.info('✅ WebSocket setup completed', 'WebSocket');
+  } catch (error) {
+    logger.error('❌ WebSocket setup failed: ' + String(error), 'WebSocket');
+    logger.warn('⚠️  App will continue without WebSocket functionality', 'WebSocket');
+    // Don't throw - let the app continue without WebSockets
+  }
+}
+
+// Example WebSocket handlers for demonstration
+export const sampleWebSocketHandlers = {
+  // Connection handler
+  connection: (socket: any) => {
+    console.log(\`Client connected: \${socket.id}\`);
+
+    // Send welcome message
+    socket.emit('welcome', {
+      message: 'Welcome to MoroJS WebSocket!',
+      timestamp: new Date().toISOString(),
+      adapter: '${config.websocketAdapter}'
+    });
+
+    // Join a sample room
+    socket.join('sample-room');
+    socket.to('sample-room').emit('user-joined', {
+      userId: socket.id,
+      message: 'A new user joined the room'
+    });
+  },
+
+  // Disconnection handler
+  disconnect: (socket: any) => {
+    console.log(\`Client disconnected: \${socket.id}\`);
+    socket.to('sample-room').emit('user-left', {
+      userId: socket.id,
+      message: 'A user left the room'
+    });
+  },
+
+  // Message handler
+  message: (socket: any, data: any) => {
+    console.log(\`💬 Message from \${socket.id}:\`, data);
+
+    // Broadcast message to all clients in the room
+    socket.to('sample-room').emit('message', {
+      userId: socket.id,
+      message: data.message,
+      timestamp: new Date().toISOString()
+    });
+
+    // Send confirmation back to sender
+    socket.emit('message-sent', {
+      success: true,
+      messageId: Date.now(),
+      timestamp: new Date().toISOString()
+    });
+  },
+
+  // Echo handler for testing
+  echo: (socket: any, data: any) => {
+    console.log(\`🔊 Echo from \${socket.id}:\`, data);
+    socket.emit('echo-response', {
+      original: data,
+      timestamp: new Date().toISOString(),
+      adapter: '${config.websocketAdapter}'
+    });
+  }
+};`;
+
+    await writeFile(join(projectPath, 'src', 'websockets', 'index.ts'), wsSetupContent);
+  }
+
+  private getWebSocketExampleCode(adapter: string): string {
+    switch (adapter) {
+      case 'socket.io':
+        return `// Socket.IO specific setup
+    const wsAdapter = app.getWebSocketAdapter();
+    if (wsAdapter && wsAdapter.getAdapterName() === 'socket.io') {
+      // Access to Socket.IO specific features
+      const namespace = wsAdapter.createNamespace('/chat');
+      namespace.on('connection', sampleWebSocketHandlers.connection);
+
+      logger.info('Socket.IO namespace "/chat" created', 'WebSocket');
+    }`;
+      case 'ws':
+        return `// Native WebSocket (ws) specific setup
+    const wsAdapter = app.getWebSocketAdapter();
+    if (wsAdapter && wsAdapter.getAdapterName() === 'ws') {
+      // Access to ws-specific features
+      const namespace = wsAdapter.getDefaultNamespace();
+      namespace.on('connection', sampleWebSocketHandlers.connection);
+
+      logger.info('Native WebSocket connection handler registered', 'WebSocket');
+    }`;
+      case 'auto-detect':
+      default:
+        return `// Auto-detected adapter setup
+    const wsAdapter = app.getWebSocketAdapter();
+    if (wsAdapter) {
+      const adapterName = wsAdapter.getAdapterName();
+      logger.info(\`Auto-detected adapter: \${adapterName}\`, 'WebSocket');
+
+      // Universal setup that works with any adapter
+      const namespace = wsAdapter.getDefaultNamespace();
+      namespace.on('connection', sampleWebSocketHandlers.connection);
+
+      logger.info(\`WebSocket handlers registered on \${adapterName} adapter\`, 'WebSocket');
+    } else {
+      logger.warn('No WebSocket adapter found - install socket.io or ws package', 'WebSocket');
+    }`;
+    }
+  }
+
+  private async generateValidationExamples(projectPath: string, config: any): Promise<void> {
+    const validationContent = this.getValidationExamplesContent(config.validation);
+    await writeFile(join(projectPath, 'src', 'validation', 'examples.ts'), validationContent);
+  }
+
+  private getValidationExamplesContent(validationLibrary: string): string {
+    const baseImports = `// Validation Examples for ${validationLibrary.charAt(0).toUpperCase() + validationLibrary.slice(1)}
+// Demonstrates how to use ${validationLibrary} with MoroJS universal validation system
+`;
+
+    switch (validationLibrary) {
+      case 'zod':
+        return `${baseImports}
+import { z } from '@morojs/moro';
+
+// Basic Zod schemas (works directly with MoroJS)
+export const UserSchema = z.object({
+  name: z.string().min(2).max(50),
+  email: z.string().email(),
+  age: z.number().min(18).max(120).optional(),
+  role: z.enum(['user', 'admin']).default('user'),
+});
+
+export const CreateUserSchema = UserSchema.omit({ role: true });
+
+export const UpdateUserSchema = UserSchema.partial();
+
+// Complex nested schema
+export const OrderSchema = z.object({
+  id: z.string().uuid(),
+  items: z.array(z.object({
+    productId: z.string(),
+    quantity: z.number().positive(),
+    price: z.number().positive(),
+  })),
+  shippingAddress: z.object({
+    street: z.string(),
+    city: z.string(),
+    zipCode: z.string().regex(/^\\d{5}$/),
+    country: z.string().min(2).max(2),
+  }),
+  total: z.number().positive(),
+});
+
+// Usage in routes:
+// app.post('/users').body(UserSchema).handler((req, res) => { ... });
+// app.put('/users/:id').body(UpdateUserSchema).handler((req, res) => { ... });
+`;
+
+      case 'joi':
+        return `${baseImports}
+import Joi from 'joi';
+import { joi } from '@morojs/moro';
+
+// Joi schemas (using MoroJS adapter)
+const JoiUserSchema = Joi.object({
+  name: Joi.string().min(2).max(50).required(),
+  email: Joi.string().email().required(),
+  age: Joi.number().min(18).max(120).optional(),
+  role: Joi.string().valid('user', 'admin').default('user'),
+});
+
+export const UserSchema = joi(JoiUserSchema);
+
+const JoiCreateUserSchema = JoiUserSchema.fork(['role'], (schema) => schema.forbidden());
+export const CreateUserSchema = joi(JoiCreateUserSchema);
+
+const JoiUpdateUserSchema = JoiUserSchema.fork(['name', 'email', 'age', 'role'], (schema) => schema.optional());
+export const UpdateUserSchema = joi(JoiUpdateUserSchema);
+
+// Complex nested schema
+const JoiOrderSchema = Joi.object({
+  id: Joi.string().uuid().required(),
+  items: Joi.array().items(Joi.object({
+    productId: Joi.string().required(),
+    quantity: Joi.number().positive().required(),
+    price: Joi.number().positive().required(),
+  })).min(1).required(),
+  shippingAddress: Joi.object({
+    street: Joi.string().required(),
+    city: Joi.string().required(),
+    zipCode: Joi.string().pattern(/^\\d{5}$/).required(),
+    country: Joi.string().length(2).required(),
+  }).required(),
+  total: Joi.number().positive().required(),
+});
+
+export const OrderSchema = joi(JoiOrderSchema);
+
+// Usage in routes:
+// app.post('/users').body(UserSchema).handler((req, res) => { ... });
+// app.put('/users/:id').body(UpdateUserSchema).handler((req, res) => { ... });
+`;
+
+      case 'yup':
+        return `${baseImports}
+import * as Yup from 'yup';
+import { yup } from '@morojs/moro';
+
+// Yup schemas (using MoroJS adapter)
+const YupUserSchema = Yup.object({
+  name: Yup.string().min(2).max(50).required(),
+  email: Yup.string().email().required(),
+  age: Yup.number().min(18).max(120).optional(),
+  role: Yup.string().oneOf(['user', 'admin']).default('user'),
+});
+
+export const UserSchema = yup(YupUserSchema);
+
+const YupCreateUserSchema = YupUserSchema.omit(['role']);
+export const CreateUserSchema = yup(YupCreateUserSchema);
+
+const YupUpdateUserSchema = YupUserSchema.partial();
+export const UpdateUserSchema = yup(YupUpdateUserSchema);
+
+// Complex nested schema
+const YupOrderSchema = Yup.object({
+  id: Yup.string().uuid().required(),
+  items: Yup.array().of(Yup.object({
+    productId: Yup.string().required(),
+    quantity: Yup.number().positive().required(),
+    price: Yup.number().positive().required(),
+  })).min(1).required(),
+  shippingAddress: Yup.object({
+    street: Yup.string().required(),
+    city: Yup.string().required(),
+    zipCode: Yup.string().matches(/^\\d{5}$/).required(),
+    country: Yup.string().length(2).required(),
+  }).required(),
+  total: Yup.number().positive().required(),
+});
+
+export const OrderSchema = yup(YupOrderSchema);
+
+// Usage in routes:
+// app.post('/users').body(UserSchema).handler((req, res) => { ... });
+// app.put('/users/:id').body(UpdateUserSchema).handler((req, res) => { ... });
+`;
+
+      case 'class-validator':
+        return `${baseImports}
+import 'reflect-metadata';
+import { IsString, IsEmail, IsNumber, IsOptional, IsEnum, IsUUID, IsArray, ValidateNested, Matches, Min, Max, IsPositive } from 'class-validator';
+import { Type } from 'class-transformer';
+import { classValidator } from '@morojs/moro';
+import { validate } from 'class-validator';
+
+// Class-based validation using decorators
+export class User {
+  @IsString()
+  @Min(2)
+  @Max(50)
+  name!: string;
+
+  @IsEmail()
+  email!: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(18)
+  @Max(120)
+  age?: number;
+
+  @IsEnum(['user', 'admin'])
+  @IsOptional()
+  role: 'user' | 'admin' = 'user';
+}
+
+export class CreateUser {
+  @IsString()
+  @Min(2)
+  @Max(50)
+  name!: string;
+
+  @IsEmail()
+  email!: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(18)
+  @Max(120)
+  age?: number;
+}
+
+export class UpdateUser {
+  @IsOptional()
+  @IsString()
+  @Min(2)
+  @Max(50)
+  name?: string;
+
+  @IsOptional()
+  @IsEmail()
+  email?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(18)
+  @Max(120)
+  age?: number;
+
+  @IsOptional()
+  @IsEnum(['user', 'admin'])
+  role?: 'user' | 'admin';
+}
+
+// Complex nested classes
+export class OrderItem {
+  @IsString()
+  productId!: string;
+
+  @IsNumber()
+  @IsPositive()
+  quantity!: number;
+
+  @IsNumber()
+  @IsPositive()
+  price!: number;
+}
+
+export class ShippingAddress {
+  @IsString()
+  street!: string;
+
+  @IsString()
+  city!: string;
+
+  @Matches(/^\\d{5}$/)
+  zipCode!: string;
+
+  @IsString()
+  @Min(2)
+  @Max(2)
+  country!: string;
+}
+
+export class Order {
+  @IsUUID()
+  id!: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => OrderItem)
+  items!: OrderItem[];
+
+  @ValidateNested()
+  @Type(() => ShippingAddress)
+  shippingAddress!: ShippingAddress;
+
+  @IsNumber()
+  @IsPositive()
+  total!: number;
+}
+
+// Create validation schemas
+export const UserSchema = classValidator(User, validate);
+export const CreateUserSchema = classValidator(CreateUser, validate);
+export const UpdateUserSchema = classValidator(UpdateUser, validate);
+export const OrderSchema = classValidator(Order, validate);
+
+// Usage in routes:
+// app.post('/users').body(UserSchema).handler((req, res) => { ... });
+// app.put('/users/:id').body(UpdateUserSchema).handler((req, res) => { ... });
+`;
+
+      case 'multiple':
+        return `${baseImports}
+// Multiple Validation Libraries Example
+// This project includes Zod, Joi, Yup, and Class Validator
+// Choose the best library for each use case!
+
+import { z, joi, yup, classValidator } from '@morojs/moro';
+import Joi from 'joi';
+import * as Yup from 'yup';
+import { IsString, IsEmail, validate } from 'class-validator';
+import 'reflect-metadata';
+
+// 1. Zod - Type-safe, modern (recommended for new projects)
+export const ZodUserSchema = z.object({
+  name: z.string().min(2),
+  email: z.string().email(),
+  age: z.number().min(18).optional(),
+});
+
+// 2. Joi - Mature, feature-rich (good for complex validation rules)
+const JoiUserSchema = Joi.object({
+  name: Joi.string().min(2).required(),
+  email: Joi.string().email().required(),
+  age: Joi.number().min(18).optional(),
+});
+export const JoiUserAdapter = joi(JoiUserSchema);
+
+// 3. Yup - Simple, popular (good for forms)
+const YupUserSchema = Yup.object({
+  name: Yup.string().min(2).required(),
+  email: Yup.string().email().required(),
+  age: Yup.number().min(18).optional(),
+});
+export const YupUserAdapter = yup(YupUserSchema);
+
+// 4. Class Validator - Decorator-based (good for OOP style)
+class UserClass {
+  @IsString()
+  name!: string;
+
+  @IsEmail()
+  email!: string;
+
+  age?: number;
+}
+export const ClassValidatorAdapter = classValidator(UserClass, validate);
+
+// Mix and match based on your needs:
+// app.post('/users/zod').body(ZodUserSchema).handler((req, res) => { ... });
+// app.post('/users/joi').body(JoiUserAdapter).handler((req, res) => { ... });
+// app.post('/users/yup').body(YupUserAdapter).handler((req, res) => { ... });
+// app.post('/users/class').body(ClassValidatorAdapter).handler((req, res) => { ... });
+
+// Performance comparison:
+// - Zod: Fast, great TypeScript integration
+// - Joi: Feature-rich, slightly heavier
+// - Yup: Simple, lightweight
+// - Class Validator: Good for complex objects, decorator overhead
+`;
+
+      default:
+        return `${baseImports}
+// Default Zod validation examples
+import { z } from '@morojs/moro';
+
+export const UserSchema = z.object({
+  name: z.string().min(2),
+  email: z.string().email(),
+  age: z.number().min(18).optional(),
+});
+`;
+    }
+  }
+
   private async generateTestSetup(projectPath: string): Promise<void> {
     // Jest configuration
     const jestConfig = {
@@ -1644,7 +2255,7 @@ Resources:
    • Create modules: morojs-cli module create <name>
 
 Features Enabled:
-${config.features.map((f: string) => `   • ${f}`).join('\n')}
+${config.features.map((f: string) => `   • ${f}${f === 'websocket' ? ` (${config.websocketAdapter})` : ''}`).join('\n')}
 `),
         {
           padding: 1,

@@ -1,6 +1,6 @@
 {
   "name": "@morojs/cli",
-  "version": "1.2.4",
+  "version": "1.3.0",
   "description": "MoroJS Framework - Comprehensive Development Toolkit",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -23,9 +23,17 @@
     "prepublish": "npm run build",
     "test": "jest",
     "test:watch": "jest --watch",
-    "lint": "eslint src --fix",
+    "test:coverage": "jest --coverage --watchAll=false",
+    "test:unit": "jest tests --testPathIgnorePatterns=integration",
+    "test:integration": "jest tests/integration",
+    "test:ci": "jest --coverage --watchAll=false --ci --forceExit --detectOpenHandles",
+    "lint": "eslint src tests --fix",
+    "lint:check": "eslint src tests",
     "lint-staged": "lint-staged",
-    "format": "prettier --write src/**/*.ts",
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "typecheck": "tsc --noEmit",
+    "validate": "npm run typecheck && npm run lint:check && npm run format:check && npm run test:ci",
     "prepare": "husky"
   },
   "keywords": [
@@ -74,7 +82,7 @@
     "zod": "^3.22.4"
   },
   "devDependencies": {
-    "@morojs/moro": "^1.0.3",
+    "@morojs/moro": "^1.4.0",
     "@types/figlet": "^1.5.8",
     "@types/fs-extra": "^11.0.4",
     "@types/inquirer": "^9.0.7",
@@ -100,7 +108,11 @@
     "LICENSE"
   ],
   "lint-staged": {
-    "*.ts": [
+    "src/**/*.ts": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "tests/**/*.ts": [
       "eslint --fix",
       "prettier --write"
     ],

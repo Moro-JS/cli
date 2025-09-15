@@ -5,7 +5,7 @@ import typescriptParser from '@typescript-eslint/parser';
 export default [
   js.configs.recommended,
   {
-    files: ['src/**/*.ts'],
+    files: ['src/**/*.ts', 'tests/**/*.ts'],
     languageOptions: {
       parser: typescriptParser,
       parserOptions: {
@@ -37,7 +37,7 @@ export default [
       '@typescript-eslint/explicit-module-boundary-types': 'off',
       '@typescript-eslint/no-empty-function': 'off',
       '@typescript-eslint/no-non-null-assertion': 'warn',
-      
+
       // General rules - relaxed for CLI
       'no-unused-vars': 'off', // Too strict for CLI with many imports
       'no-console': 'off', // Console is expected in CLI tools
@@ -79,4 +79,4 @@ export default [
       'no-undef': 'off',
     },
   },
-]; 
+];

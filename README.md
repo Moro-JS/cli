@@ -22,7 +22,7 @@ The official CLI for the MoroJS framework, providing a complete set of tools for
 npm install -g @morojs/cli
 
 # Create a new project
-morojs-cli init my-api --runtime=node --database=postgresql --features=auth,cors,docs
+morojs-cli init my-api --runtime=node --database=postgresql --features=auth,cors,docs --validation=zod
 
 # Navigate to project
 cd my-api
@@ -41,6 +41,8 @@ morojs-cli init <project-name> [options]
   -r, --runtime <type>      Runtime adapter (node|vercel-edge|aws-lambda|cloudflare-workers)
   -d, --database <type>     Database adapter (mysql|postgresql|sqlite|mongodb|redis|drizzle)
   -f, --features <list>     Features (auth,cors,helmet,compression,websocket,docs)
+  -w, --websocket <adapter> WebSocket adapter (auto-detect|socket.io|ws|none)
+  -v, --validation <lib>    Validation library (zod|joi|yup|class-validator|multiple)
   -t, --template <type>     Template (api|fullstack|microservice)
   --skip-git               Skip Git initialization
   --skip-install           Skip npm install
@@ -134,11 +136,13 @@ morojs-cli dev --port=3000 --watch=./modules
 # Build for production
 morojs-cli build --target=lambda --minify
 
-# Lint and format code
-morojs-cli lint --fix
-
-# Run tests
-morojs-cli test --watch --coverage
+# Code quality (linting, formatting, testing)
+npm run validate            # Full validation pipeline
+npm run lint               # Lint and fix issues
+npm run format             # Format code with Prettier
+npm run test               # Run test suite
+npm run test:watch         # Run tests in watch mode
+npm run test:coverage      # Generate coverage report
 
 # Security scan
 morojs-cli security:scan
@@ -149,7 +153,7 @@ morojs-cli security:scan
 ### API Server
 
 ```bash
-morojs-cli init my-api --template=api --runtime=node --database=postgresql
+morojs-cli init my-api --template=api --runtime=node --database=postgresql --validation=zod
 ```
 
 Perfect for REST APIs, GraphQL servers, and backend services.
@@ -157,18 +161,26 @@ Perfect for REST APIs, GraphQL servers, and backend services.
 ### Microservice
 
 ```bash
-morojs-cli init my-service --template=microservice --runtime=vercel-edge
+morojs-cli init my-service --template=microservice --runtime=vercel-edge --validation=yup
 ```
 
 Lightweight services optimized for serverless deployment.
 
+### Real-time Application
+
+```bash
+morojs-cli init my-chat --features=websocket,auth --websocket=socket.io --validation=joi
+```
+
+Real-time applications with WebSocket support and flexible validation.
+
 ### Full-stack
 
 ```bash
-morojs-cli init my-app --template=fullstack --features=auth,websocket,docs
+morojs-cli init my-app --template=fullstack --features=auth,websocket,docs --validation=multiple
 ```
 
-Complete application with frontend integration support.
+Complete application with frontend integration support and all validation libraries.
 
 ## Runtime Adapters
 
@@ -188,13 +200,28 @@ Complete application with frontend integration support.
 - **Redis** - In-memory data structure store
 - **Drizzle ORM** - Type-safe database toolkit
 
+## WebSocket Support
+
+- **Auto-detect** - Automatically detects and uses available WebSocket libraries
+- **Socket.IO** - Feature-rich with rooms, namespaces, and real-time communication
+- **Native ws** - Lightweight, standards-compliant WebSocket implementation
+- **None** - Skip WebSocket dependencies for minimal builds
+
+## Validation Libraries
+
+- **Zod** - Type-safe validation with TypeScript integration (recommended)
+- **Joi** - Mature validation library with extensive features
+- **Yup** - Simple and popular validation library
+- **Class Validator** - Decorator-based validation for TypeScript classes
+- **Multiple** - Install all libraries for maximum flexibility
+
 ## Built-in Middleware
 
 - **Authentication** - JWT, Session, OAuth support
 - **CORS** - Cross-Origin Resource Sharing
 - **Rate Limiting** - Request throttling and protection
 - **Caching** - Response caching (Memory, Redis, File)
-- **Validation** - Zod-based request validation
+- **Validation** - Universal validation (Zod, Joi, Yup, Class Validator)
 - **Security Headers** - Helmet.js integration
 - **Compression** - Gzip/Brotli response compression
 - **Session Management** - Secure session handling
@@ -205,8 +232,8 @@ Complete application with frontend integration support.
 ### Create a User Management API
 
 ```bash
-# Initialize project
-morojs-cli init user-api --runtime=node --database=postgresql --features=auth,docs
+# Initialize project with Joi validation
+morojs-cli init user-api --runtime=node --database=postgresql --features=auth,docs --validation=joi
 
 # Create users module
 morojs-cli module create users --features=database,auth,cache --middleware=rate-limit --with-tests
@@ -240,8 +267,8 @@ npm run deploy:lambda
 ### Full-stack Application
 
 ```bash
-# Create full-stack app
-morojs-cli init chat-app --template=fullstack --features=websocket,auth,docs --database=mongodb
+# Create full-stack app with Socket.IO and multiple validation libraries
+morojs-cli init chat-app --template=fullstack --features=websocket,auth,docs --database=mongodb --websocket=socket.io --validation=multiple
 
 # Create chat module
 morojs-cli module create chat --features=websocket,database,auth --with-tests
@@ -282,6 +309,43 @@ REDIS_URL=redis://localhost:6379
 JWT_SECRET=your-secret-key
 CORS_ORIGIN=https://yourdomain.com
 ```
+
+## Development & Testing
+
+Generated projects include a complete development workflow:
+
+### Available Scripts
+
+```bash
+# Development
+npm run dev                 # Start development server
+npm run build              # Build for production
+
+# Code Quality
+npm run validate           # Run all quality checks
+npm run lint               # ESLint with auto-fix
+npm run lint:check         # ESLint check only
+npm run format             # Prettier formatting
+npm run format:check       # Check formatting
+npm run typecheck          # TypeScript compilation check
+
+# Testing
+npm run test               # Run all tests
+npm run test:unit          # Unit tests only
+npm run test:integration   # Integration tests only
+npm run test:watch         # Watch mode
+npm run test:coverage      # Coverage report
+```
+
+### Quality Standards
+
+All generated projects include:
+
+- **TypeScript** for type safety
+- **ESLint** for code quality
+- **Prettier** for consistent formatting
+- **Jest** for testing with TypeScript support
+- **GitHub Actions** for CI/CD
 
 ## 🤝 Contributing
 
