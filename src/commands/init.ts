@@ -598,9 +598,7 @@ CLOUDFLARE_API_TOKEN=`
 // Generated based on selected features: ${config.features.join(', ')}
 // Reference: https://morojs.com/docs/configuration
 
-export default async () => {
-  const os = await import('os');
-  return {
+export default {
   // Server Configuration
   server: {
     port: parseInt(process.env.PORT || process.env.MORO_PORT || '3000'),
@@ -752,7 +750,7 @@ ${
       ? `
     clustering: {
       enabled: process.env.CLUSTERING_ENABLED === 'true',
-      workers: parseInt(process.env.CLUSTER_WORKERS || process.env.MORO_WORKERS || '0') || os.cpus().length
+      workers: parseInt(process.env.CLUSTER_WORKERS || process.env.MORO_WORKERS || '0') || 'auto'
     }`
       : ''
   }
@@ -854,7 +852,6 @@ ${
   }`
         : ''
     }
-  };
 };`;
 
     await writeFile(join(projectPath, 'moro.config.ts'), configContent);
