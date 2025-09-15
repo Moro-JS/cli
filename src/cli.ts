@@ -428,30 +428,6 @@ export async function runCLI(): Promise<void> {
       }
     });
 
-  // Legacy support for existing module generation
-  program
-    .command('generate <name>')
-    .alias('g')
-    .description('Generate module (legacy command)')
-    .option('--features <features>', 'Comma-separated features')
-    .action(async (name: string, options: any) => {
-      logger.info(
-        'Using legacy module generation. Consider using "morojs-cli module create" for enhanced features.',
-        'Legacy'
-      );
-      try {
-        const generator = new ModuleStubGenerator();
-        const features = options.features ? options.features.split(',') : [];
-        await generator.generateModule(name, features);
-      } catch (error) {
-        logger.error(
-          `Failed to generate module: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          'Generate'
-        );
-        process.exit(1);
-      }
-    });
-
   // Help and examples
   program
     .command('examples')

@@ -98,8 +98,8 @@ jobs:
         run: |
           mkdir -p /tmp/test-cli
           cd /tmp/test-cli
-          node ${{ github.workspace }}/dist/cli.js generate test-module --features=websocket,database
-          ls -la test-module/
+          node ${{ github.workspace }}/dist/cli.js module create test-module --features=websocket,database
+          ls -la src/modules/test-module/
 
   build:
     name: Build

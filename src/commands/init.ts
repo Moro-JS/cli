@@ -598,6 +598,8 @@ CLOUDFLARE_API_TOKEN=`
 // Generated based on selected features: ${config.features.join(', ')}
 // Reference: https://morojs.com/docs/configuration
 
+import { AppConfig } from '@morojs/moro';
+
 export default {
   // Server Configuration
   server: {
@@ -852,7 +854,7 @@ ${
   }`
         : ''
     }
-};`;
+} as Partial<AppConfig>;`;
 
     await writeFile(join(projectPath, 'moro.config.ts'), configContent);
   }
