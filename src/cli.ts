@@ -35,9 +35,19 @@ export async function runCLI(): Promise<void> {
   program
     .command('init <project-name>')
     .description('Initialize a new MoroJS project')
-    .option('-r, --runtime <type>', 'Runtime adapter (node|vercel-edge|aws-lambda|cloudflare-workers)', 'node')
-    .option('-d, --database <type>', 'Database adapter (mysql|postgresql|sqlite|mongodb|redis|drizzle)')
-    .option('-f, --features <features>', 'Comma-separated features (auth,cors,helmet,compression,websocket,docs)')
+    .option(
+      '-r, --runtime <type>',
+      'Runtime adapter (node|vercel-edge|aws-lambda|cloudflare-workers)',
+      'node'
+    )
+    .option(
+      '-d, --database <type>',
+      'Database adapter (mysql|postgresql|sqlite|mongodb|redis|drizzle)'
+    )
+    .option(
+      '-f, --features <features>',
+      'Comma-separated features (auth,cors,helmet,compression,websocket,docs)'
+    )
     .option('-t, --template <template>', 'Project template (api|fullstack|microservice)', 'api')
     .option('--skip-git', 'Skip Git repository initialization')
     .option('--skip-install', 'Skip npm install')
@@ -46,26 +56,37 @@ export async function runCLI(): Promise<void> {
         const initializer = new ProjectInitializer();
         await initializer.initializeProject(projectName, options);
       } catch (error) {
-        logger.error(`Failed to initialize project: ${error instanceof Error ? error.message : 'Unknown error'}`, 'Init');
+        logger.error(
+          `Failed to initialize project: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'Init'
+        );
         process.exit(1);
       }
     });
 
   // Module Generation (Enhanced)
-  const moduleCmd = program
-    .command('module')
-    .alias('m')
-    .description('Module management commands');
+  const moduleCmd = program.command('module').alias('m').description('Module management commands');
 
   moduleCmd
     .command('create <name>')
     .alias('new')
     .description('Create a new module with advanced features')
-    .option('-f, --features <features>', 'Features: websocket,database,auth,cache,validation,docs', 'validation')
+    .option(
+      '-f, --features <features>',
+      'Features: websocket,database,auth,cache,validation,docs',
+      'validation'
+    )
     .option('-d, --database <type>', 'Database adapter type')
-    .option('-m, --middleware <middleware>', 'Built-in middleware: auth,cors,rate-limit,cache,validation')
+    .option(
+      '-m, --middleware <middleware>',
+      'Built-in middleware: auth,cors,rate-limit,cache,validation'
+    )
     .option('-r, --routes <routes>', 'Route patterns: crud,rest,graphql', 'crud')
-    .option('-t, --template <template>', 'Module template: service,controller,repository', 'service')
+    .option(
+      '-t, --template <template>',
+      'Module template: service,controller,repository',
+      'service'
+    )
     .option('--auth-roles <roles>', 'Authentication roles for protected routes')
     .option('--with-tests', 'Generate test files')
     .option('--with-docs', 'Generate API documentation')
@@ -74,7 +95,10 @@ export async function runCLI(): Promise<void> {
         const generator = new ModuleStubGenerator();
         await generator.generateAdvancedModule(name, options);
       } catch (error) {
-        logger.error(`Failed to generate module: ${error instanceof Error ? error.message : 'Unknown error'}`, 'Module');
+        logger.error(
+          `Failed to generate module: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'Module'
+        );
         process.exit(1);
       }
     });
@@ -87,21 +111,25 @@ export async function runCLI(): Promise<void> {
         const generator = new ModuleStubGenerator();
         await generator.listModules();
       } catch (error) {
-        logger.error(`Failed to list modules: ${error instanceof Error ? error.message : 'Unknown error'}`, 'Module');
+        logger.error(
+          `Failed to list modules: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'Module'
+        );
         process.exit(1);
       }
     });
 
   // Configuration Management
-  const configCmd = program
-    .command('config')
-    .alias('c')
-    .description('Configuration management');
+  const configCmd = program.command('config').alias('c').description('Configuration management');
 
   configCmd
     .command('init')
-    .description('Generate moro.config.js with intelligent defaults')
-    .option('-e, --environment <env>', 'Target environment (development|staging|production)', 'development')
+    .description('Generate moro.config.ts with intelligent defaults')
+    .option(
+      '-e, --environment <env>',
+      'Target environment (development|staging|production)',
+      'development'
+    )
     .option('-d, --database <type>', 'Primary database type')
     .option('-r, --runtime <type>', 'Runtime adapter type')
     .action(async (options: any) => {
@@ -109,7 +137,10 @@ export async function runCLI(): Promise<void> {
         const configManager = new ConfigManager();
         await configManager.initializeConfig(options);
       } catch (error) {
-        logger.error(`Failed to initialize config: ${error instanceof Error ? error.message : 'Unknown error'}`, 'Config');
+        logger.error(
+          `Failed to initialize config: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'Config'
+        );
         process.exit(1);
       }
     });
@@ -122,7 +153,10 @@ export async function runCLI(): Promise<void> {
         const configManager = new ConfigManager();
         await configManager.validateConfig();
       } catch (error) {
-        logger.error(`Config validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'Config');
+        logger.error(
+          `Config validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'Config'
+        );
         process.exit(1);
       }
     });
@@ -136,16 +170,16 @@ export async function runCLI(): Promise<void> {
         const configManager = new ConfigManager();
         await configManager.generateEnvTemplate(options);
       } catch (error) {
-        logger.error(`Failed to generate env template: ${error instanceof Error ? error.message : 'Unknown error'}`, 'Config');
+        logger.error(
+          `Failed to generate env template: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'Config'
+        );
         process.exit(1);
       }
     });
 
   // Database Management
-  const dbCmd = program
-    .command('database')
-    .alias('db')
-    .description('Database management');
+  const dbCmd = program.command('database').alias('db').description('Database management');
 
   dbCmd
     .command('setup <type>')
@@ -161,7 +195,10 @@ export async function runCLI(): Promise<void> {
         const dbManager = new DatabaseManager();
         await dbManager.setupAdapter(type, options);
       } catch (error) {
-        logger.error(`Failed to setup database: ${error instanceof Error ? error.message : 'Unknown error'}`, 'Database');
+        logger.error(
+          `Failed to setup database: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'Database'
+        );
         process.exit(1);
       }
     });
@@ -177,7 +214,10 @@ export async function runCLI(): Promise<void> {
         const dbManager = new DatabaseManager();
         await dbManager.runMigrations(options);
       } catch (error) {
-        logger.error(`Migration failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'Database');
+        logger.error(
+          `Migration failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'Database'
+        );
         process.exit(1);
       }
     });
@@ -191,7 +231,10 @@ export async function runCLI(): Promise<void> {
         const dbManager = new DatabaseManager();
         await dbManager.runSeeds(options);
       } catch (error) {
-        logger.error(`Seeding failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'Database');
+        logger.error(
+          `Seeding failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'Database'
+        );
         process.exit(1);
       }
     });
@@ -211,7 +254,10 @@ export async function runCLI(): Promise<void> {
         const middlewareManager = new MiddlewareManager();
         await middlewareManager.addMiddleware(type, options);
       } catch (error) {
-        logger.error(`Failed to add middleware: ${error instanceof Error ? error.message : 'Unknown error'}`, 'Middleware');
+        logger.error(
+          `Failed to add middleware: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'Middleware'
+        );
         process.exit(1);
       }
     });
@@ -224,7 +270,10 @@ export async function runCLI(): Promise<void> {
         const middlewareManager = new MiddlewareManager();
         await middlewareManager.listMiddleware();
       } catch (error) {
-        logger.error(`Failed to list middleware: ${error instanceof Error ? error.message : 'Unknown error'}`, 'Middleware');
+        logger.error(
+          `Failed to list middleware: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'Middleware'
+        );
         process.exit(1);
       }
     });
@@ -244,7 +293,10 @@ export async function runCLI(): Promise<void> {
         const deployManager = new DeploymentManager();
         await deployManager.setupVercel(options);
       } catch (error) {
-        logger.error(`Vercel deployment setup failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'Deploy');
+        logger.error(
+          `Vercel deployment setup failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'Deploy'
+        );
         process.exit(1);
       }
     });
@@ -260,7 +312,10 @@ export async function runCLI(): Promise<void> {
         const deployManager = new DeploymentManager();
         await deployManager.setupLambda(options);
       } catch (error) {
-        logger.error(`Lambda deployment setup failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'Deploy');
+        logger.error(
+          `Lambda deployment setup failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'Deploy'
+        );
         process.exit(1);
       }
     });
@@ -274,7 +329,10 @@ export async function runCLI(): Promise<void> {
         const deployManager = new DeploymentManager();
         await deployManager.setupCloudflareWorkers(options);
       } catch (error) {
-        logger.error(`Workers deployment setup failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'Deploy');
+        logger.error(
+          `Workers deployment setup failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'Deploy'
+        );
         process.exit(1);
       }
     });
@@ -291,7 +349,10 @@ export async function runCLI(): Promise<void> {
         const devTools = new DevTools();
         await devTools.startDevServer(options);
       } catch (error) {
-        logger.error(`Dev server failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'Dev');
+        logger.error(
+          `Dev server failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'Dev'
+        );
         process.exit(1);
       }
     });
@@ -307,7 +368,10 @@ export async function runCLI(): Promise<void> {
         const devTools = new DevTools();
         await devTools.buildProject(options);
       } catch (error) {
-        logger.error(`Build failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'Build');
+        logger.error(
+          `Build failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'Build'
+        );
         process.exit(1);
       }
     });
@@ -321,7 +385,10 @@ export async function runCLI(): Promise<void> {
         const devTools = new DevTools();
         await devTools.lintProject(options);
       } catch (error) {
-        logger.error(`Linting failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'Lint');
+        logger.error(
+          `Linting failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'Lint'
+        );
         process.exit(1);
       }
     });
@@ -336,7 +403,10 @@ export async function runCLI(): Promise<void> {
         const devTools = new DevTools();
         await devTools.runTests(options);
       } catch (error) {
-        logger.error(`Tests failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'Test');
+        logger.error(
+          `Tests failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'Test'
+        );
         process.exit(1);
       }
     });
@@ -350,7 +420,10 @@ export async function runCLI(): Promise<void> {
         const devTools = new DevTools();
         await devTools.securityScan();
       } catch (error) {
-        logger.error(`Security scan failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'Security');
+        logger.error(
+          `Security scan failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'Security'
+        );
         process.exit(1);
       }
     });
@@ -362,13 +435,19 @@ export async function runCLI(): Promise<void> {
     .description('Generate module (legacy command)')
     .option('--features <features>', 'Comma-separated features')
     .action(async (name: string, options: any) => {
-      logger.info('Using legacy module generation. Consider using "morojs-cli module create" for enhanced features.', 'Legacy');
+      logger.info(
+        'Using legacy module generation. Consider using "morojs-cli module create" for enhanced features.',
+        'Legacy'
+      );
       try {
         const generator = new ModuleStubGenerator();
         const features = options.features ? options.features.split(',') : [];
         await generator.generateModule(name, features);
       } catch (error) {
-        logger.error(`Failed to generate module: ${error instanceof Error ? error.message : 'Unknown error'}`, 'Generate');
+        logger.error(
+          `Failed to generate module: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'Generate'
+        );
         process.exit(1);
       }
     });
@@ -427,8 +506,8 @@ export async function runModuleStubGenerator(): Promise<void> {
 
 // Run CLI if this file is executed directly
 if (require.main === module) {
-  runCLI().catch((error) => {
+  runCLI().catch(error => {
     console.error('CLI Error:', error);
     process.exit(1);
   });
-} 
+}

@@ -259,7 +259,7 @@ MoroJS CLI respects configuration from multiple sources:
 
 1. **Command line arguments** (highest priority)
 2. **Environment variables** (`MORO_*` prefix)
-3. **moro.config.js** configuration file
+3. **moro.config.ts** configuration file
 4. **package.json** `morojs` field
 5. **Default values** (lowest priority)
 

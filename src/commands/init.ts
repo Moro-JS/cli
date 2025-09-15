@@ -172,16 +172,16 @@ export class ProjectInitializer {
         name: 'features',
         message: 'Select features to include:',
         choices: [
-          { name: 'Authentication & Authorization', value: 'auth', checked: true },
+          { name: 'Authentication & Authorization', value: 'auth' },
           { name: ' CORS & Security Headers', value: 'cors', checked: true },
           { name: ' Compression & Performance', value: 'compression', checked: true },
           { name: 'WebSocket Support', value: 'websocket' },
-          { name: 'API Documentation (OpenAPI)', value: 'docs', checked: true },
-          { name: 'Rate Limiting', value: 'rate-limit', checked: true },
+          { name: 'API Documentation (OpenAPI)', value: 'docs' },
+          { name: 'Rate Limiting', value: 'rate-limit' },
           { name: 'Caching Layer', value: 'cache' },
           { name: 'Circuit Breaker', value: 'circuit-breaker' },
           { name: 'Monitoring & Metrics', value: 'monitoring' },
-          { name: 'Testing Setup', value: 'testing', checked: true },
+          { name: 'Testing Setup', value: 'testing' },
         ],
       });
     }
@@ -208,11 +208,11 @@ export class ProjectInitializer {
       version: '1.0.0',
       description: `MoroJS ${config.template} project`,
       type: 'module',
-      main: 'dist/index.js',
+      main: 'dist/src/index.js',
       scripts: {
-        dev: 'morojs-cli dev',
-        build: 'morojs-cli build',
-        start: 'node dist/index.js',
+        dev: 'tsx src/index.ts',
+        build: 'tsc',
+        start: 'node dist/src/index.js',
         test: 'morojs-cli test',
         lint: 'morojs-cli lint',
         'db:migrate': 'morojs-cli db migrate --up',
@@ -236,12 +236,16 @@ export class ProjectInitializer {
         ...(config.features.includes('auth') && {
           bcryptjs: '^2.4.3',
         }),
+        ...(config.features.includes('docs') && {
+          'swagger-ui-dist': '^5.11.0',
+        }),
         zod: '^3.22.4',
       },
       devDependencies: {
         '@morojs/cli': '^1.0.0',
         '@types/node': '^20.10.0',
         typescript: '^5.3.2',
+        tsx: '^4.7.0',
         ...(config.features.includes('auth') && {
           '@types/bcryptjs': '^2.4.0',
         }),
@@ -272,7 +276,6 @@ export class ProjectInitializer {
         skipLibCheck: true,
         forceConsistentCasingInFileNames: true,
         outDir: './dist',
-        rootDir: './src',
         declaration: true,
         declarationMap: true,
         sourceMap: true,
@@ -282,7 +285,7 @@ export class ProjectInitializer {
         resolveJsonModule: true,
         allowSyntheticDefaultImports: true,
       },
-      include: ['src/**/*'],
+      include: ['src/**/*', 'moro.config.ts'],
       exclude: ['node_modules', 'dist', '**/*.test.ts', '**/*.spec.ts'],
     };
 
@@ -301,8 +304,8 @@ export class ProjectInitializer {
 
     const appContent = `// ${config.template.toUpperCase()} MoroJS Application
 import { ${runtimeImports[config.runtime as keyof typeof runtimeImports]}, logger, initializeConfig } from '@morojs/moro';
-${config.database !== 'none' ? `import { setupDatabase } from './database';` : ''}
-${config.features.includes('auth') ? `import { setupAuth } from './middleware/auth';` : ''}
+${config.database !== 'none' ? `import { setupDatabase } from './database/index.js';` : ''}
+${config.features.includes('auth') ? `import { setupAuth } from './middleware/auth.js';` : ''}
 
 // Initialize configuration from moro.config.js and environment variables
 const appConfig = initializeConfig();
@@ -320,42 +323,159 @@ const app = ${runtimeImports[config.runtime as keyof typeof runtimeImports]}({
 // Database setup
 ${config.database !== 'none' ? `await setupDatabase(app);` : ''}
 
-// Middleware setup
+// Auth setup
 ${config.features.includes('auth') ? `await setupAuth(app);` : ''}
 
-// API Documentation
+// Health check endpoint
+app.get('/health')
+  .describe('Health check endpoint to verify API status')
+  .tag('System')
+  .handler(async (req: any, res: any) => {
+    return {
+      success: true,
+      status: 'healthy',
+      timestamp: new Date().toISOString(),
+      runtime: '${config.runtime}',
+      version: '1.0.0'
+    };
+  });
+
+// Welcome endpoint
+app.get('/')
+  .describe('Welcome endpoint with API information and available routes')
+  .tag('General')
+  .handler(async (req: any, res: any) => {
+    return {
+      message: 'Welcome to your MoroJS ${config.template}!',
+      docs: '/docs',
+      health: '/health',
+      auth: {
+        login: '/auth/login',
+        register: '/auth/register',
+        profile: '/auth/profile'
+      }
+    };
+  });
+
+// Auth endpoints
+app.post('/auth/login')
+  .describe('Login with email and password')
+  .tag('Auth')
+  .handler(async (req: any, res: any) => {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      res.status(400);
+      return {
+        success: false,
+        error: 'Email and password are required'
+      };
+    }
+
+    try {
+      console.log('Login attempt:', { email });
+      const result = await req.auth.signIn('credentials', { email, password });
+      console.log('Login result:', { success: !!result });
+
+      if (!result) {
+        res.status(401);
+        return {
+          success: false,
+          error: 'Invalid credentials'
+        };
+      }
+
+      const token = await req.auth.createToken(result);
+      await req.auth.setSession({ user: result, token });
+
+      return {
+        success: true,
+        data: {
+          user: result,
+          token
+        }
+      };
+    } catch (error) {
+      console.error('Auth error:', error);
+      res.status(401);
+      return {
+        success: false,
+        error: 'Authentication failed'
+      };
+    }
+  });
+
+app.post('/auth/register')
+  .describe('Register a new user')
+  .tag('Auth')
+  .handler(async (req: any, res: any) => {
+    const { email, password, name } = req.body;
+    if (!email || !password || !name) {
+      res.status(400);
+      return {
+        success: false,
+        error: 'Email, password, and name are required'
+      };
+    }
+
+    // In a real app, you would hash the password and store in a database
+    return {
+      success: true,
+      message: 'Registration successful. Please login.'
+    };
+  });
+
+app.get('/auth/profile')
+  .describe('Get authenticated user profile')
+  .tag('Auth')
+  .handler(async (req: any, res: any) => {
+    const user = await req.auth.getUser();
+    if (!user) {
+      res.status(401);
+      return {
+        success: false,
+        error: 'Not authenticated'
+      };
+    }
+
+    return {
+      success: true,
+      data: {
+        user,
+        session: req.auth.session
+      }
+    };
+  });
+
 ${
   config.features.includes('docs')
     ? `
+// API Documentation
 app.enableDocs({
   title: '${config.template.charAt(0).toUpperCase() + config.template.slice(1)} API',
   description: 'MoroJS ${config.template} application',
   version: '1.0.0',
-  basePath: '/docs'
-});`
+  basePath: '/docs',
+  swaggerUI: {
+    enableTryItOut: false,
+    enableFilter: false,
+    enableDeepLinking: false,
+    customCss: \`
+      .swagger-ui .topbar { display: none }
+      .swagger-ui .scheme-container { display: none }
+      .swagger-ui .info { margin: 20px 0 }
+      .swagger-ui .info .title { font-size: 24px }
+      .swagger-ui .info .title small { display: none }
+      .swagger-ui .info .title span { display: none }
+      .swagger-ui .information-container { padding: 0 }
+      .swagger-ui section.models { display: none }
+      .swagger-ui .auth-wrapper { display: none }
+      .swagger-ui .try-out { display: none }
+    \`
+  },
+});
+`
     : ''
 }
-
-// Health check endpoint
-app.get('/health', async (req, res) => {
-  return {
-    success: true,
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    runtime: '${config.runtime}',
-    version: '1.0.0'
-  };
-});
-
-// Welcome endpoint
-app.get('/', async (req, res) => {
-  return {
-    message: 'Welcome to your MoroJS ${config.template}!',
-    docs: '/docs',
-    health: '/health'
-  };
-});
-
 // Auto-discover and load modules
 // Modules will be automatically loaded from ./modules directory
 
@@ -478,7 +598,9 @@ CLOUDFLARE_API_TOKEN=`
 // Generated based on selected features: ${config.features.join(', ')}
 // Reference: https://morojs.com/docs/configuration
 
-export default {
+export default async () => {
+  const os = await import('os');
+  return {
   // Server Configuration
   server: {
     port: parseInt(process.env.PORT || process.env.MORO_PORT || '3000'),
@@ -575,7 +697,7 @@ ${
         config.features.includes('cors')
           ? `
       origin: process.env.NODE_ENV === 'production'
-        ? (process.env.CORS_ORIGIN || process.env.MORO_CORS_ORIGIN || false)?.split(',')
+        ? (process.env.CORS_ORIGIN || process.env.MORO_CORS_ORIGIN || '*').split(',')
         : '*',
       methods: (process.env.CORS_METHODS || process.env.MORO_CORS_METHODS || 'GET,POST,PUT,DELETE,PATCH,OPTIONS').split(','),
       allowedHeaders: (process.env.CORS_HEADERS || process.env.MORO_CORS_HEADERS || 'Content-Type,Authorization').split(','),
@@ -630,7 +752,7 @@ ${
       ? `
     clustering: {
       enabled: process.env.CLUSTERING_ENABLED === 'true',
-      workers: parseInt(process.env.CLUSTER_WORKERS || process.env.MORO_WORKERS) || require('os').cpus().length
+      workers: parseInt(process.env.CLUSTER_WORKERS || process.env.MORO_WORKERS || '0') || os.cpus().length
     }`
       : ''
   }
@@ -638,7 +760,10 @@ ${
 
 `
     : ''
-}  // Module Configuration
+}${
+      config.features.some((f: string) => ['cache', 'rate-limit', 'validation'].includes(f))
+        ? `
+  // Module Configuration
   modules: {${
     config.features.includes('cache')
       ? `
@@ -670,9 +795,11 @@ ${
     }`
       : ''
   }
-  }${
-    config.features.includes('service-discovery')
-      ? `,
+  }`
+        : ''
+    }${
+      config.features.includes('service-discovery')
+        ? `,
 
   // Service Discovery Configuration
   serviceDiscovery: {
@@ -683,10 +810,10 @@ ${
     healthCheckInterval: parseInt(process.env.HEALTH_CHECK_INTERVAL || process.env.MORO_HEALTH_INTERVAL || '30000'),
     retryAttempts: parseInt(process.env.DISCOVERY_RETRY_ATTEMPTS || process.env.MORO_DISCOVERY_RETRIES || '3')
   }`
-      : ''
-  }${
-    config.features.some((f: string) => ['stripe', 'paypal', 'smtp', 'email'].includes(f))
-      ? `,
+        : ''
+    }${
+      config.features.some((f: string) => ['stripe', 'paypal', 'smtp', 'email'].includes(f))
+        ? `,
 
   // External Services Configuration
   external: {${
@@ -725,11 +852,12 @@ ${
       : ''
   }
   }`
-      : ''
-  }
+        : ''
+    }
+  };
 };`;
 
-    await writeFile(join(projectPath, 'moro.config.js'), configContent);
+    await writeFile(join(projectPath, 'moro.config.ts'), configContent);
   }
 
   private async generateGitignore(projectPath: string): Promise<void> {
@@ -897,7 +1025,7 @@ ${config.features.includes('docs') ? `- **API Docs**: \`GET /docs\`` : ''}
 
 This project includes a comprehensive configuration system:
 
-- **\`moro.config.js\`** - Feature-based configuration with production-ready defaults
+- **\`moro.config.ts\`** - Feature-based configuration with production-ready defaults
 - **\`.env\`** - Environment variables for development
 - **\`.env.example\`** - Environment variables template
 
@@ -1216,50 +1344,26 @@ volumes:
 
     const adapterName = getAdapterName(config.database);
 
-    const dbSetupContent = `// Database Setup and Configuration
-import { ${adapterName} } from '@morojs/moro';
+    const dbSetupContent =
+      config.database === 'postgresql'
+        ? `// Database Setup and Configuration
+import pg from 'pg';
 import { createFrameworkLogger } from '@morojs/moro';
 
 const logger = createFrameworkLogger('Database');
 
 export async function setupDatabase(app: any): Promise<void> {
   try {
-    const adapter = new ${adapterName}({
-      ${
-        config.database === 'postgresql'
-          ? `
+    const pool = new pg.Pool({
       host: process.env.POSTGRESQL_HOST || 'localhost',
       port: parseInt(process.env.POSTGRESQL_PORT || '5432'),
       user: process.env.POSTGRESQL_USER || 'postgres',
-      password: process.env.POSTGRESQL_PASSWORD,
-      database: process.env.POSTGRESQL_DATABASE`
-          : config.database === 'mysql'
-            ? `
-      host: process.env.MYSQL_HOST || 'localhost',
-      port: parseInt(process.env.MYSQL_PORT || '3306'),
-      user: process.env.MYSQL_USER || 'mysql',
-      password: process.env.MYSQL_PASSWORD,
-      database: process.env.MYSQL_DATABASE`
-            : ''
-      }
-      ${
-        config.database === 'mongodb'
-          ? `
-      url: process.env.MONGODB_URI`
-          : ''
-      }
-      ${
-        config.database === 'redis'
-          ? `
-      url: process.env.REDIS_URL,
-      host: process.env.REDIS_HOST,
-      port: parseInt(process.env.REDIS_PORT || '6379')`
-          : ''
-      }
+      password: process.env.POSTGRESQL_PASSWORD || 'postgres',
+      database: process.env.POSTGRESQL_DATABASE || 'postgres'
     });
 
-    await adapter.connect();
-    app.database(adapter);
+    await pool.connect();
+    app.database = pool;
 
     logger.info('✅ Database connected successfully', 'Database');
   } catch (error) {
@@ -1267,95 +1371,159 @@ export async function setupDatabase(app: any): Promise<void> {
     logger.warn('⚠️  App will continue without database connection', 'Database');
     // Don't throw - let the app continue without database
   }
-}`;
+}`
+        : config.database === 'mysql'
+          ? `// Database Setup and Configuration
+import mysql from 'mysql2/promise';
+import { createFrameworkLogger } from '@morojs/moro';
+
+const logger = createFrameworkLogger('Database');
+
+export async function setupDatabase(app: any): Promise<void> {
+  try {
+    const pool = await mysql.createPool({
+      host: process.env.MYSQL_HOST || 'localhost',
+      port: parseInt(process.env.MYSQL_PORT || '3306'),
+      user: process.env.MYSQL_USER || 'mysql',
+      password: process.env.MYSQL_PASSWORD || 'mysql',
+      database: process.env.MYSQL_DATABASE || 'mysql'
+    });
+
+    app.database = pool;
+    logger.info('✅ Database connected successfully', 'Database');
+  } catch (error) {
+    logger.error('❌ Database connection failed: ' + String(error), 'Database');
+    logger.warn('⚠️  App will continue without database connection', 'Database');
+    // Don't throw - let the app continue without database
+  }
+}`
+          : config.database === 'mongodb'
+            ? `// Database Setup and Configuration
+import { MongoClient } from 'mongodb';
+import { createFrameworkLogger } from '@morojs/moro';
+
+const logger = createFrameworkLogger('Database');
+
+export async function setupDatabase(app: any): Promise<void> {
+  try {
+    const client = new MongoClient(process.env.MONGODB_URI || 'mongodb://localhost:27017');
+    await client.connect();
+    app.database = client.db(process.env.MONGODB_DATABASE || 'test');
+    logger.info('✅ Database connected successfully', 'Database');
+  } catch (error) {
+    logger.error('❌ Database connection failed: ' + String(error), 'Database');
+    logger.warn('⚠️  App will continue without database connection', 'Database');
+    // Don't throw - let the app continue without database
+  }
+}`
+            : '';
 
     await writeFile(join(projectPath, 'src', 'database', 'index.ts'), dbSetupContent);
   }
 
   private async generateAuthMiddleware(projectPath: string): Promise<void> {
-    const authContent = `// Auth.js Authentication Middleware
-import { builtInMiddleware, providers } from '@morojs/moro';
+    const authContent = `// Authentication Middleware for MoroJS
 import bcrypt from 'bcryptjs';
 
-export async function setupAuth(app: any): Promise<void> {
-  // Configure Auth.js providers
-  app.use(builtInMiddleware.auth({
-    secret: process.env.NEXTAUTH_SECRET || process.env.AUTH_SECRET || 'your-secret-key-change-in-production',
-    providers: [
-      // Credentials provider for email/password authentication
-      providers.credentials({
-        name: 'credentials',
-        credentials: {
-          email: { label: 'Email', type: 'email', placeholder: 'user@example.com' },
-          password: { label: 'Password', type: 'password' }
-        },
-        authorize: async (credentials) => {
-          if (!credentials?.email || !credentials?.password) {
-            return null;
-          }
+// Mock auth middleware that creates the auth object on requests
+function createAuthMiddleware() {
+  return (req: any, res: any, next: any) => {
+    // Initialize auth object
+    req.auth = {
+      isAuthenticated: false,
+      user: null,
+      session: null,
+      async getSession() {
+        return req.auth.session;
+      },
+      async getUser() {
+        return req.auth.user;
+      },
+      async signIn(provider: string, credentials: any) {
+        console.log(\`🔐 Sign in attempt with \${provider}:\`, { email: credentials.email });
 
-          // TODO: Replace with actual database lookup
-          // const user = await getUserByEmail(credentials.email);
-          // if (user && await bcrypt.compare(credentials.password, user.password)) {
-          //   return { id: user.id, name: user.name, email: user.email };
-          // }
-
-          // Mock implementation for development
+        // Mock authentication logic
+        if (provider === 'credentials') {
           if (credentials.email === 'admin@example.com' && credentials.password === 'password') {
-            return {
+            const user = {
               id: '1',
               name: 'Admin User',
               email: 'admin@example.com',
               role: 'admin'
             };
+
+            req.auth.isAuthenticated = true;
+            req.auth.user = user;
+            req.auth.session = {
+              user,
+              expires: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(), // 8 hours
+              customData: {
+                lastActivity: new Date(),
+                sessionId: 'session_' + Math.random().toString(36).substr(2, 9),
+                provider: 'credentials',
+              },
+            };
+
+            console.log('🔐 Authentication successful');
+            return user;
           }
-
-          return null;
         }
-      }),
 
-      // Uncomment and configure OAuth providers as needed:
-
-      // providers.google({
-      //   clientId: process.env.GOOGLE_CLIENT_ID!,
-      //   clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-      // }),
-
-      // providers.github({
-      //   clientId: process.env.GITHUB_CLIENT_ID!,
-      //   clientSecret: process.env.GITHUB_CLIENT_SECRET!,
-      // }),
-
-      // providers.discord({
-      //   clientId: process.env.DISCORD_CLIENT_ID!,
-      //   clientSecret: process.env.DISCORD_CLIENT_SECRET!,
-      // }),
-    ],
-    session: {
-      strategy: 'jwt', // Use JWT tokens for sessions
-      maxAge: 30 * 24 * 60 * 60, // 30 days
-    },
-    pages: {
-      signIn: '/auth/signin',
-      signOut: '/auth/signout',
-      error: '/auth/error',
-    },
-    callbacks: {
-      jwt: async ({ token, user }) => {
-        if (user) {
-          token.role = user.role;
-        }
-        return token;
+        console.log('🔐 Authentication failed');
+        return null;
       },
-      session: async ({ session, token }) => {
-        if (token?.role) {
-          session.user.role = token.role;
-        }
-        return session;
+      signOut(options?: any) {
+        console.log('🚪 Sign out initiated');
+        req.auth.isAuthenticated = false;
+        req.auth.user = null;
+        req.auth.session = null;
+        return { url: options?.callbackUrl || '/' };
       },
-    },
-    debug: process.env.NODE_ENV === 'development',
-  }));
+      createToken(user: any) {
+        // Mock token creation
+        return 'jwt_' + Math.random().toString(36).substr(2, 20);
+      },
+      setSession(sessionData: any) {
+        req.auth.session = sessionData.session || sessionData;
+        req.auth.user = sessionData.user;
+        req.auth.isAuthenticated = true;
+        return Promise.resolve();
+      }
+    };
+
+    // Check for existing authentication via Authorization header
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+
+      // Mock token validation
+      if (token.startsWith('jwt_') || token === 'admin-token') {
+        req.auth.isAuthenticated = true;
+        req.auth.user = {
+          id: '1',
+          name: 'Admin User',
+          email: 'admin@example.com',
+          role: 'admin'
+        };
+        req.auth.session = {
+          user: req.auth.user,
+          expires: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(),
+          customData: {
+            lastActivity: new Date(),
+            sessionId: 'session_from_token',
+            provider: 'credentials',
+          },
+        };
+      }
+    }
+
+    next();
+  };
+}
+
+export async function setupAuth(app: any): Promise<void> {
+  // Install the auth middleware
+  app.use(createAuthMiddleware());
 
   // Protected route example
   app.get('/api/profile', async (req: any, res: any) => {
@@ -1463,7 +1631,7 @@ Project Structure:
    │   └── types/            # TypeScript types
    ├── package.json
    ├── tsconfig.json
-   ├── moro.config.js
+   ├── moro.config.ts
    └── README.md
 
 Next Steps:
