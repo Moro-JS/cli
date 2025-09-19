@@ -88,7 +88,14 @@ export default {
     port: parseInt(process.env.PORT || '3000'),
     host: process.env.HOST || 'localhost',
     maxConnections: 1000,
-    timeout: 30000
+    timeout: 30000,
+    bodySizeLimit: '10mb',
+    requestTracking: {
+      enabled: true
+    },
+    errorBoundary: {
+      enabled: true
+    }
   },
 
   serviceDiscovery: {
