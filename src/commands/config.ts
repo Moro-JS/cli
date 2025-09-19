@@ -87,7 +87,6 @@ export default {
   server: {
     port: parseInt(process.env.PORT || '3000'),
     host: process.env.HOST || 'localhost',
-    environment: process.env.NODE_ENV || '${options.environment || 'development'}',
     maxConnections: 1000,
     timeout: 30000
   },

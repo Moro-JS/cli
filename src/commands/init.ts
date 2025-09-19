@@ -732,8 +732,7 @@ export default {
   // Server Configuration
   server: {
     port: parseInt(process.env.PORT || process.env.MORO_PORT || '3000'),
-    host: process.env.HOST || process.env.MORO_HOST || 'localhost',
-    environment: process.env.NODE_ENV || process.env.MORO_ENV || 'development'${
+    host: process.env.HOST || process.env.MORO_HOST || 'localhost'${
       config.runtime === 'node'
         ? `,
     maxConnections: parseInt(process.env.MAX_CONNECTIONS || process.env.MORO_MAX_CONNECTIONS || '1000'),
