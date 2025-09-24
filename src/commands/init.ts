@@ -260,7 +260,7 @@ export class ProjectInitializer {
       type: 'module',
       main: 'dist/src/index.js',
       scripts: {
-        dev: 'tsx src/index.ts',
+        dev: 'tsx watch src/index.ts',
         build: 'tsc',
         start: 'node dist/src/index.js',
         test: 'morojs-cli test',
@@ -274,20 +274,20 @@ export class ProjectInitializer {
         }),
       },
       dependencies: {
-        '@morojs/moro': 'file:../MoroJS', // Use local development version
-        ...(config.database === 'postgresql' && { pg: '^8.11.3', '@types/pg': '^8.10.9' }),
-        ...(config.database === 'mysql' && { mysql2: '^3.6.5' }),
-        ...(config.database === 'mongodb' && { mongodb: '^6.3.0' }),
-        ...(config.database === 'redis' && { redis: '^4.6.10' }),
+        '@morojs/moro': 'latest',
+        ...(config.database === 'postgresql' && { pg: '^8.16.3', '@types/pg': '^8.15.5' }),
+        ...(config.database === 'mysql' && { mysql2: '^3.15.0' }),
+        ...(config.database === 'mongodb' && { mongodb: '^6.20.0' }),
+        ...(config.database === 'redis' && { redis: '^5.8.2' }),
         ...(config.database === 'drizzle' && {
-          'drizzle-orm': '^0.29.1',
-          'drizzle-kit': '^0.20.6',
+          'drizzle-orm': '^0.44.5',
+          'drizzle-kit': '^0.31.4',
         }),
         ...(config.features.includes('auth') && {
-          bcryptjs: '^2.4.3',
+          bcryptjs: '^3.0.2',
         }),
         ...(config.features.includes('docs') && {
-          'swagger-ui-dist': '^5.11.0',
+          'swagger-ui-dist': '^5.29.0',
         }),
         // WebSocket dependencies based on selected adapter
         ...(config.features.includes('websocket') &&
@@ -296,56 +296,56 @@ export class ProjectInitializer {
           }),
         ...(config.features.includes('websocket') &&
           config.websocketAdapter === 'ws' && {
-            ws: '^8.18.0',
+            ws: '^8.18.3',
           }),
         ...(config.features.includes('websocket') &&
           config.websocketAdapter === 'auto-detect' && {
             'socket.io': '^4.8.1',
-            ws: '^8.18.0',
+            ws: '^8.18.3',
           }),
         // Validation library dependencies
         ...(config.validation === 'zod' && {
-          zod: '^3.22.4',
+          zod: '^4.1.11',
         }),
         ...(config.validation === 'joi' && {
-          joi: '^17.12.0',
+          joi: '^18.0.1',
         }),
         ...(config.validation === 'yup' && {
-          yup: '^1.4.0',
+          yup: '^1.7.1',
         }),
         ...(config.validation === 'class-validator' && {
-          'class-validator': '^0.14.1',
+          'class-validator': '^0.14.2',
           'class-transformer': '^0.5.1',
-          'reflect-metadata': '^0.2.1',
+          'reflect-metadata': '^0.2.2',
         }),
         ...(config.validation === 'multiple' && {
-          zod: '^3.22.4',
-          joi: '^17.12.0',
-          yup: '^1.4.0',
-          'class-validator': '^0.14.1',
+          zod: '^4.1.11',
+          joi: '^18.0.1',
+          yup: '^1.7.1',
+          'class-validator': '^0.14.2',
           'class-transformer': '^0.5.1',
-          'reflect-metadata': '^0.2.1',
+          'reflect-metadata': '^0.2.2',
         }),
       },
       devDependencies: {
         '@morojs/cli': '^1.0.0',
-        '@types/node': '^20.10.0',
-        typescript: '^5.3.2',
-        tsx: '^4.7.0',
+        '@types/node': '^24.5.2',
+        typescript: '^5.9.2',
+        tsx: '^4.20.5',
         ...(config.features.includes('auth') && {
-          '@types/bcryptjs': '^2.4.0',
+          '@types/bcryptjs': '^3.0.0',
         }),
         ...(config.features.includes('testing') && {
-          jest: '^29.7.0',
-          '@types/jest': '^29.5.8',
-          'ts-jest': '^29.1.1',
-          supertest: '^6.3.3',
-          '@types/supertest': '^2.0.16',
+          jest: '^30.1.3',
+          '@types/jest': '^30.0.0',
+          'ts-jest': '^29.4.4',
+          supertest: '^7.1.4',
+          '@types/supertest': '^6.0.3',
         }),
         // WebSocket TypeScript types
         ...(config.features.includes('websocket') &&
           (config.websocketAdapter === 'ws' || config.websocketAdapter === 'auto-detect') && {
-            '@types/ws': '^8.5.10',
+            '@types/ws': '^8.18.1',
           }),
         // Validation library TypeScript types
         ...((config.validation === 'joi' || config.validation === 'multiple') && {
