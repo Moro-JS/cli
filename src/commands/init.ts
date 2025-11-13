@@ -284,7 +284,9 @@ export class ProjectInitializer {
           'drizzle-kit': '^0.31.4',
         }),
         ...(config.features.includes('auth') && {
-          bcryptjs: '^3.0.2',
+          'better-auth': '^1.3.34',
+          bcryptjs: '^2.4.3',
+          jsonwebtoken: '^9.0.2',
         }),
         ...(config.features.includes('docs') && {
           'swagger-ui-dist': '^5.29.0',
@@ -333,7 +335,8 @@ export class ProjectInitializer {
         typescript: '^5.9.2',
         tsx: '^4.20.5',
         ...(config.features.includes('auth') && {
-          '@types/bcryptjs': '^3.0.0',
+          '@types/bcryptjs': '^2.4.6',
+          '@types/jsonwebtoken': '^9.0.10',
         }),
         ...(config.features.includes('testing') && {
           jest: '^30.1.3',
@@ -688,7 +691,7 @@ REDIS_PORT=6379`
 ${
   config.features.includes('auth')
     ? `
-JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
+AUTH_SECRET=your-super-secret-jwt-key-change-this-in-production
 JWT_EXPIRES_IN=24h
 BCRYPT_ROUNDS=12`
     : ''
@@ -1577,141 +1580,461 @@ export async function setupDatabase(app: any): Promise<void> {
   }
 
   private async generateAuthMiddleware(projectPath: string): Promise<void> {
-    const authContent = `// Authentication Middleware for MoroJS
+    const authContent = `// Authentication Middleware for MoroJS with better-auth
+import { auth, providers } from '@morojs/moro';
 import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 
-// Mock auth middleware that creates the auth object on requests
-function createAuthMiddleware() {
-  return (req: any, res: any, next: any) => {
-    // Initialize auth object
-    req.auth = {
-      isAuthenticated: false,
-      user: null,
-      session: null,
-      async getSession() {
-        return req.auth.session;
-      },
-      async getUser() {
-        return req.auth.user;
-      },
-      async signIn(provider: string, credentials: any) {
-        console.log(\`🔐 Sign in attempt with \${provider}:\`, { email: credentials.email });
+export async function setupAuth(app: any): Promise<void> {
+  // Setup MoroJS better-auth integration
+  app.use(auth({
+    providers: [
+      // Credentials provider for email/password login
+      providers.credentials({
+        name: 'Credentials',
+        credentials: {
+          email: { label: 'Email', type: 'text', placeholder: 'user@example.com' },
+          password: { label: 'Password', type: 'password' }
+        },
+        authorize: async (credentials: any) => {
+          if (!credentials?.email || !credentials?.password) {
+            console.log('🔐 Missing credentials');
+            return null;
+          }
 
-        // Mock authentication logic
-        if (provider === 'credentials') {
-          if (credentials.email === 'admin@example.com' && credentials.password === 'password') {
-            const user = {
+          try {
+            // TODO: Replace with actual database query
+            // Example: Find user by email in your database
+            // const user = await db.select().from(users).where(eq(users.email, credentials.email)).limit(1);
+
+            // Mock user for demonstration
+            const mockUser = {
               id: '1',
-              name: 'Admin User',
               email: 'admin@example.com',
-              role: 'admin'
+              password: await bcrypt.hash('password', 12), // In production, this would come from database
+              status: 'active',
+              roles: ['user']
             };
 
-            req.auth.isAuthenticated = true;
-            req.auth.user = user;
-            req.auth.session = {
-              user,
-              expires: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(), // 8 hours
-              customData: {
-                lastActivity: new Date(),
-                sessionId: 'session_' + Math.random().toString(36).substr(2, 9),
-                provider: 'credentials',
-              },
-            };
+            if (credentials.email !== mockUser.email) {
+              console.log('🔐 User not found:', credentials.email);
+              return null;
+            }
 
-            console.log('🔐 Authentication successful');
-            return user;
+            // Check if user is active
+            if (mockUser.status !== 'active') {
+              console.log('🔐 User account is not active:', mockUser.status);
+              return null;
+            }
+
+            // Verify password
+            const isValidPassword = await bcrypt.compare(credentials.password, mockUser.password);
+            if (!isValidPassword) {
+              console.log('🔐 Invalid password for:', credentials.email);
+              return null;
+            }
+
+            console.log('✅ User authenticated successfully:', credentials.email);
+
+            // Return user data (excluding sensitive info like password)
+            return {
+              id: mockUser.id,
+              name: mockUser.email,
+              email: mockUser.email,
+              roles: mockUser.roles,
+              status: mockUser.status
+            };
+          } catch (error) {
+            console.error('🔐 Authentication error:', error);
+            return null;
+          }
+        }
+      })
+    ],
+    secret: process.env.AUTH_SECRET || 'your-super-secret-jwt-key-change-this-in-production',
+    session: {
+      strategy: 'jwt',
+      maxAge: 8 * 60 * 60 // 8 hours
+    },
+    callbacks: {
+      async jwt({ token, user }: any) {
+        // Persist user data in JWT token
+        if (user) {
+          token.id = user.id;
+          token.email = user.email;
+          token.roles = user.roles;
+          token.status = user.status;
+        }
+        return token;
+      },
+      async session({ session, token }: any) {
+        // Send properties to the client
+        if (token) {
+          session.user = {
+            id: token.id,
+            name: token.name,
+            email: token.email,
+            roles: token.roles,
+            status: token.status
+          };
+        }
+        return session;
+      }
+    }
+  }));
+
+  // Authentication status endpoint
+  app.get('/api/auth/status')
+    .describe('Get current authentication status')
+    .tag('Authentication')
+    .handler(async (req: any, res: any) => {
+      try {
+        const secret = process.env.AUTH_SECRET || 'your-super-secret-jwt-key-change-this-in-production';
+
+        // Try to get token from cookie first, then Authorization header
+        let token = req.cookies?.['auth-token'];
+        if (!token && req.headers.authorization) {
+          const authHeader = req.headers.authorization;
+          if (authHeader.startsWith('Bearer ')) {
+            token = authHeader.substring(7);
           }
         }
 
-        console.log('🔐 Authentication failed');
-        return null;
-      },
-      signOut(options?: any) {
-        console.log('🚪 Sign out initiated');
-        req.auth.isAuthenticated = false;
-        req.auth.user = null;
-        req.auth.session = null;
-        return { url: options?.callbackUrl || '/' };
-      },
-      createToken(user: any) {
-        // Mock token creation
-        return 'jwt_' + Math.random().toString(36).substr(2, 20);
-      },
-      setSession(sessionData: any) {
-        req.auth.session = sessionData.session || sessionData;
-        req.auth.user = sessionData.user;
-        req.auth.isAuthenticated = true;
-        return Promise.resolve();
+        if (!token) {
+          return {
+            success: true,
+            isAuthenticated: false,
+            user: null
+          };
+        }
+
+        // Verify and decode JWT token
+        const decoded = jwt.verify(token, secret) as any;
+
+        return {
+          success: true,
+          isAuthenticated: true,
+          user: {
+            id: decoded.id,
+            email: decoded.email,
+            roles: decoded.roles,
+            status: decoded.status
+          }
+        };
+      } catch (error) {
+        // Token is invalid or expired
+        return {
+          success: true,
+          isAuthenticated: false,
+          user: null
+        };
       }
-    };
+    });
 
-    // Check for existing authentication via Authorization header
-    const authHeader = req.headers.authorization;
-    if (authHeader?.startsWith('Bearer ')) {
-      const token = authHeader.split(' ')[1];
+  // Login endpoint - handles JWT token creation
+  app.post('/api/auth/login')
+    .describe('User login with email and password')
+    .tag('Authentication')
+    .handler(async (req: any, res: any) => {
+      try {
+        const { email, password } = req.body;
 
-      // Mock token validation
-      if (token.startsWith('jwt_') || token === 'admin-token') {
-        req.auth.isAuthenticated = true;
-        req.auth.user = {
+        if (!email || !password) {
+          res.status(400);
+          return {
+            success: false,
+            error: 'Email and password are required'
+          };
+        }
+
+        // TODO: Replace with actual database query
+        // Mock user for demonstration
+        const mockUser = {
           id: '1',
-          name: 'Admin User',
           email: 'admin@example.com',
-          role: 'admin'
+          password: await bcrypt.hash('password', 12),
+          status: 'active',
+          roles: ['user']
         };
-        req.auth.session = {
-          user: req.auth.user,
-          expires: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(),
-          customData: {
-            lastActivity: new Date(),
-            sessionId: 'session_from_token',
-            provider: 'credentials',
+
+        if (email !== mockUser.email) {
+          res.status(401);
+          return {
+            success: false,
+            error: 'Invalid credentials'
+          };
+        }
+
+        // Check if user is active
+        if (mockUser.status !== 'active') {
+          res.status(401);
+          return {
+            success: false,
+            error: 'Account is not active'
+          };
+        }
+
+        // Verify password
+        const isValidPassword = await bcrypt.compare(password, mockUser.password);
+        if (!isValidPassword) {
+          res.status(401);
+          return {
+            success: false,
+            error: 'Invalid credentials'
+          };
+        }
+
+        // Create JWT token
+        const secret = process.env.AUTH_SECRET || 'your-super-secret-jwt-key-change-this-in-production';
+
+        const tokenPayload = {
+          id: mockUser.id,
+          email: mockUser.email,
+          roles: mockUser.roles,
+          status: mockUser.status,
+          iat: Math.floor(Date.now() / 1000),
+          exp: Math.floor(Date.now() / 1000) + (8 * 60 * 60) // 8 hours
+        };
+
+        const token = jwt.sign(tokenPayload, secret);
+
+        // Set JWT token as HTTP-only cookie
+        res.cookie('auth-token', token, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'lax',
+          path: '/',
+          maxAge: 8 * 60 * 60 * 1000 // 8 hours
+        });
+
+        return {
+          success: true,
+          message: 'Login successful',
+          user: {
+            id: mockUser.id,
+            email: mockUser.email,
+            roles: mockUser.roles,
+            status: mockUser.status
           },
+          token: token // Also return token in response for API clients
+        };
+      } catch (error) {
+        console.error('Login error:', error);
+        res.status(500);
+        return {
+          success: false,
+          error: 'Login failed',
+          details: error instanceof Error ? error.message : 'Unknown error'
         };
       }
+    });
+
+  // Logout endpoint
+  app.post('/api/auth/logout')
+    .describe('User logout')
+    .tag('Authentication')
+    .handler(async (req: any, res: any) => {
+      try {
+        // Clear the auth cookie
+        res.cookie('auth-token', '', {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'lax',
+          path: '/',
+          maxAge: 0
+        });
+
+        return {
+          success: true,
+          message: 'Logout successful'
+        };
+      } catch (error) {
+        res.status(500);
+        return {
+          success: false,
+          error: 'Logout failed',
+          details: error instanceof Error ? error.message : 'Unknown error'
+        };
+      }
+    });
+
+  // Protected profile endpoint
+  app.get('/api/profile')
+    .describe('Get authenticated user profile')
+    .tag('Authentication')
+    .handler(async (req: any, res: any) => {
+      try {
+        const secret = process.env.AUTH_SECRET || 'your-super-secret-jwt-key-change-this-in-production';
+
+        // Try to get token from cookie first, then Authorization header
+        let token = req.cookies?.['auth-token'];
+        if (!token && req.headers.authorization) {
+          const authHeader = req.headers.authorization;
+          if (authHeader.startsWith('Bearer ')) {
+            token = authHeader.substring(7);
+          }
+        }
+
+        if (!token) {
+          res.status(401);
+          return {
+            success: false,
+            error: 'Authentication required'
+          };
+        }
+
+        // Verify and decode JWT token
+        const decoded = jwt.verify(token, secret) as any;
+
+        return {
+          success: true,
+          user: {
+            id: decoded.id,
+            email: decoded.email,
+            roles: decoded.roles,
+            status: decoded.status
+          }
+        };
+      } catch (error) {
+        res.status(401);
+        return {
+          success: false,
+          error: 'Authentication required'
+        };
+      }
+    });
+
+  // Admin-only endpoint example
+  app.get('/api/admin')
+    .describe('Admin access required endpoint')
+    .tag('Authentication')
+    .handler(async (req: any, res: any) => {
+      try {
+        const secret = process.env.AUTH_SECRET || 'your-super-secret-jwt-key-change-this-in-production';
+
+        // Try to get token from cookie first, then Authorization header
+        let token = req.cookies?.['auth-token'];
+        if (!token && req.headers.authorization) {
+          const authHeader = req.headers.authorization;
+          if (authHeader.startsWith('Bearer ')) {
+            token = authHeader.substring(7);
+          }
+        }
+
+        if (!token) {
+          res.status(401);
+          return {
+            success: false,
+            error: 'Authentication required'
+          };
+        }
+
+        // Verify and decode JWT token
+        const decoded = jwt.verify(token, secret) as any;
+
+        // Check for admin role
+        const isAdmin = decoded.roles?.includes('admin');
+
+        if (!isAdmin) {
+          res.status(403);
+          return {
+            success: false,
+            error: 'Admin access required'
+          };
+        }
+
+        return {
+          success: true,
+          message: 'Admin access granted',
+          user: {
+            id: decoded.id,
+            email: decoded.email,
+            roles: decoded.roles
+          }
+        };
+      } catch (error) {
+        res.status(401);
+        return {
+          success: false,
+          error: 'Authentication required'
+        };
+      }
+    });
+
+  // Authentication middleware that attaches user to request
+  app.use(async (req: any, res: any, next: any) => {
+    try {
+      const secret = process.env.AUTH_SECRET || 'your-super-secret-jwt-key-change-this-in-production';
+
+      // Try to get token from cookie first, then Authorization header
+      let token = req.cookies?.['auth-token'];
+      if (!token && req.headers.authorization) {
+        const authHeader = req.headers.authorization;
+        if (authHeader.startsWith('Bearer ')) {
+          token = authHeader.substring(7);
+        }
+      }
+
+      if (token) {
+        try {
+          // Verify and decode JWT token
+          const decoded = jwt.verify(token, secret) as any;
+
+          // Set req.user for the request
+          req.user = {
+            id: decoded.id,
+            email: decoded.email,
+            roles: decoded.roles || ['user'],
+            status: decoded.status
+          };
+
+          // Also set req.auth for better-auth compatibility
+          req.auth = {
+            user: req.user,
+            session: null,
+            isAuthenticated: true,
+            getSession: async () => null,
+            getToken: async () => decoded,
+            signIn: () => Promise.resolve('/api/auth/signin'),
+            signOut: () => Promise.resolve('/api/auth/signout'),
+            getCsrfToken: () => Promise.resolve(''),
+            getProviders: () => Promise.resolve({})
+          };
+        } catch (error) {
+          // Token is invalid or expired
+          console.log('Invalid token:', error);
+          req.auth = {
+            user: null,
+            session: null,
+            isAuthenticated: false,
+            getSession: async () => null,
+            getToken: async () => null,
+            signIn: () => Promise.resolve('/api/auth/signin'),
+            signOut: () => Promise.resolve('/api/auth/signout'),
+            getCsrfToken: () => Promise.resolve(''),
+            getProviders: () => Promise.resolve({})
+          };
+        }
+      } else {
+        // No token provided
+        req.auth = {
+          user: null,
+          session: null,
+          isAuthenticated: false,
+          getSession: async () => null,
+          getToken: async () => null,
+          signIn: () => Promise.resolve('/api/auth/signin'),
+          signOut: () => Promise.resolve('/api/auth/signout'),
+          getCsrfToken: () => Promise.resolve(''),
+          getProviders: () => Promise.resolve({})
+        };
+      }
+
+      next();
+    } catch (error) {
+      console.log('Auth middleware error:', error);
+      next();
     }
-
-    next();
-  };
-}
-
-export async function setupAuth(app: any): Promise<void> {
-  // Install the auth middleware
-  app.use(createAuthMiddleware());
-
-  // Protected route example
-  app.get('/api/profile', async (req: any, res: any) => {
-    // Auth.js automatically adds auth object to request
-    if (!req.auth?.isAuthenticated) {
-    res.status(401);
-      return { success: false, error: 'Authentication required' };
-    }
-
-    return {
-      success: true,
-      user: req.auth.user,
-      session: req.auth.session
-    };
-  });
-
-  // Admin-only route example
-  app.get('/api/admin', async (req: any, res: any) => {
-    if (!req.auth?.isAuthenticated) {
-      res.status(401);
-      return { success: false, error: 'Authentication required' };
-    }
-
-    if (req.auth.user?.role !== 'admin') {
-      res.status(403);
-      return { success: false, error: 'Admin access required' };
-    }
-
-    return {
-      success: true,
-      message: 'Admin access granted',
-      user: req.auth.user
-    };
   });
 }`;
 
