@@ -414,7 +414,7 @@ ${config.features.includes('websocket') ? `import { setupWebSockets } from './we
 const appConfig = initializeConfig();
 
 // Create MoroJS application with ${config.runtime} runtime
-const app = ${runtimeImports[config.runtime as keyof typeof runtimeImports]}({
+const app = await ${runtimeImports[config.runtime as keyof typeof runtimeImports]}({
   ${config.features.includes('cors') ? `cors: true,` : ''}
   ${config.features.includes('compression') ? `compression: true,` : ''}
   ${config.features.includes('websocket') && config.websocketAdapter !== 'none' ? this.getWebSocketConfigString(config.websocketAdapter) : ''}
