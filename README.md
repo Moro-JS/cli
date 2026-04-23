@@ -1,159 +1,183 @@
 # @morojs/cli
 
-**MoroJS Framework - Comprehensive Development Toolkit**
+**MoroJS Framework — Comprehensive Development Toolkit**
 
 The official CLI for the MoroJS framework, providing a complete set of tools for building modern, high-performance APIs and microservices.
 
 ## Features
 
-- **Project Initialization** - Create new projects with intelligent defaults
-- **Advanced Module Generation** - Create modules with built-in middleware and features
-- **Configuration Management** - Generate and validate MoroJS configurations
-- **Database Management** - Setup adapters, run migrations, and seed data
-- **Multi-Runtime Deployment** - Deploy to Vercel, AWS Lambda, Cloudflare Workers
-- **Middleware Management** - Add and configure built-in middleware
-- **Development Tools** - Dev server, build, lint, test commands
-- **Security Scanning** - Built-in security analysis tools
+- **Project Initialization** — interactive or one-shot non-interactive mode
+- **Advanced Module Generation** — modules with built-in middleware and features
+- **Configuration Management** — generate and validate MoroJS configurations
+- **Database Management** — setup adapters, run migrations, seed data
+- **Multi-Runtime Deployment** — Vercel, AWS Lambda, Cloudflare Workers
+- **Middleware Management** — add and configure built-in middleware
+- **Development Tools** — dev server, build, lint, test commands
+- **Security Scanning** — built-in security analysis tools
+- **Friendly errors** — typos in flag values surface "did you mean…?" hints
+- **Update notifier** — pings you when a newer CLI version is available
 
 ## Quick Start
 
+The recommended way to run the CLI is via `npx` — no install required:
+
 ```bash
-# Install globally
-npm install -g @morojs/cli
+# Interactive (guided prompts)
+npx @morojs/cli init my-api
 
-# Create a new project
-morojs-cli init my-api --runtime=node --database=postgresql --features=auth,cors,docs --validation=zod
-
-# Navigate to project
-cd my-api
-
-# Start development server
-npm run dev
+# Non-interactive (any flag, or --fast, skips prompts)
+npx @morojs/cli init my-api --fast
+npx @morojs/cli init my-api --database=postgresql --features=auth,cors,docs
 ```
+
+Prefer a global install? Three binary names are provided: `morojs-cli`, `moro-cli`, or the short alias `moro`.
+
+```bash
+npm install -g @morojs/cli
+moro init my-api --fast
+```
+
+## Init Modes
+
+`init` has two modes, picked automatically based on whether you pass any flag:
+
+| Mode                | Trigger                | Behavior                                                                                                                               |
+| ------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| **Interactive**     | No flags               | Walks you through each option step-by-step. Prints the equivalent non-interactive command at the end so you can repeat it.             |
+| **Non-interactive** | Any flag (or `--fast`) | Skips all prompts. Anything you didn't pass falls back to defaults: `runtime=node`, `database=none`, `template=api`, `validation=zod`. |
+
+Flag values are validated up-front. `--runtime=nod` or `--features=corss` errors out with a "did you mean…?" hint instead of silently producing a broken project. Project names are checked against npm package-name rules.
 
 ## Commands
 
-### Project Management
+### Project Initialization
 
 ```bash
-# Initialize new project
-morojs-cli init <project-name> [options]
-  -r, --runtime <type>      Runtime adapter (node|vercel-edge|aws-lambda|cloudflare-workers)
-  -d, --database <type>     Database adapter (mysql|postgresql|sqlite|mongodb|redis|drizzle)
-  -f, --features <list>     Features (auth,cors,helmet,compression,websocket,docs)
-  -w, --websocket <adapter> WebSocket adapter (auto-detect|socket.io|ws|none)
-  -v, --validation <lib>    Validation library (zod|joi|yup|class-validator|multiple)
-  -t, --template <type>     Template (api|fullstack|microservice)
-  --skip-git               Skip Git initialization
-  --skip-install           Skip npm install
+npx @morojs/cli init <project-name> [options]
+  -t, --template <type>        Template (api|microservice|fullstack)
+  -r, --runtime <type>         Runtime (node|vercel-edge|aws-lambda|cloudflare-workers) [default: node]
+  -d, --database <type>        Database (mysql|postgresql|sqlite|mongodb|redis|drizzle|none)
+  -v, --validation <lib>       Validation (zod|joi|yup|class-validator|multiple)
+  -w, --websocket <adapter>    WebSocket (auto-detect|socket.io|ws|none)
+  -f, --features <list>        Features (auth,cors,helmet,compression,websocket,docs,
+                               rate-limit,cache,circuit-breaker,monitoring,testing)
+  -p, --package-manager <pm>   Package manager (npm|yarn|pnpm) [auto-detected from npm_config_user_agent]
+  --fast                       Skip all prompts and use sensible defaults
+  --force                      Overwrite existing directory without prompting
+  --dry-run                    Print what would be created (file tree, resolved config,
+                               equivalent command) without writing any files
+  --skip-git                   Skip Git initialization
+  --skip-install               Skip dependency installation
 ```
+
+The CLI auto-detects which package manager invoked it (npm/yarn/pnpm via `npm_config_user_agent`) and uses it for the install step and for the scripts in the generated README. Override explicitly with `--package-manager`.
+
+> Bun is intentionally **not** included as a package-manager option: `@morojs/moro` targets the Node.js runtime (it depends on `uWebSockets.js`' native N-API bindings) and bun-as-runtime is not officially supported yet.
 
 ### Module Development
 
 ```bash
 # Create advanced module
-morojs-cli module create <name> [options]
+npx @morojs/cli module create <name> [options]
   -f, --features <list>     Features (websocket,database,auth,cache,validation,docs)
   -d, --database <type>     Database adapter type
   -m, --middleware <list>   Built-in middleware (auth,cors,rate-limit,cache,validation)
   -r, --routes <pattern>    Route patterns (crud,rest,graphql)
   --auth-roles <roles>      Authentication roles
-  --with-tests             Generate test files
-  --with-docs              Generate API documentation
+  --with-tests              Generate test files
+  --with-docs               Generate API documentation
 
 # List modules
-morojs-cli module list
-
-# Legacy module generation
-morojs-cli generate <name> --features=websocket,database
+npx @morojs/cli module list
 ```
 
 ### Configuration
 
 ```bash
 # Generate configuration
-morojs-cli config init [options]
+npx @morojs/cli config init [options]
   -e, --environment <env>   Environment (development|staging|production)
   -d, --database <type>     Primary database type
   -r, --runtime <type>      Runtime adapter type
 
 # Validate configuration
-morojs-cli config validate
+npx @morojs/cli config validate
 
 # Generate .env template
-morojs-cli config env --environment=production
+npx @morojs/cli config env --environment=production
 ```
 
 ### Database Management
 
 ```bash
 # Setup database adapter
-morojs-cli db setup <type> [options]
+npx @morojs/cli db setup <type> [options]
   -h, --host <host>         Database host
   -p, --port <port>         Database port
   -u, --username <user>     Database username
   -d, --database <db>       Database name
-  --with-migrations        Generate migration system
-  --with-seeds             Generate seed system
+  --with-migrations         Generate migration system
+  --with-seeds              Generate seed system
 
 # Run migrations
-morojs-cli db migrate --up|--down|--reset
+npx @morojs/cli db migrate --up|--down|--reset
 
 # Seed database
-morojs-cli db seed --environment=development
+npx @morojs/cli db seed --environment=development
 ```
 
 ### Middleware Management
 
 ```bash
 # Add middleware
-morojs-cli middleware add <type> [options]
+npx @morojs/cli middleware add <type> [options]
   -c, --config <json>       Middleware configuration
 
 # List available middleware
-morojs-cli middleware list
+npx @morojs/cli middleware list
 ```
 
 ### Deployment
 
 ```bash
 # Vercel Edge deployment
-morojs-cli deploy vercel --domain=myapi.vercel.app
+npx @morojs/cli deploy vercel --domain=myapi.vercel.app
 
 # AWS Lambda deployment
-morojs-cli deploy lambda --region=us-west-2 --memory=1024
+npx @morojs/cli deploy lambda --region=us-west-2 --memory=1024
 
 # Cloudflare Workers deployment
-morojs-cli deploy workers --name=my-worker
+npx @morojs/cli deploy workers --name=my-worker
 ```
 
 ### Development Tools
 
 ```bash
 # Development server with hot reload
-morojs-cli dev --port=3000 --watch=./modules
+npx @morojs/cli dev --port=3000 --watch=./modules
 
 # Build for production
-morojs-cli build --target=lambda --minify
-
-# Code quality (linting, formatting, testing)
-npm run validate            # Full validation pipeline
-npm run lint               # Lint and fix issues
-npm run format             # Format code with Prettier
-npm run test               # Run test suite
-npm run test:watch         # Run tests in watch mode
-npm run test:coverage      # Generate coverage report
+npx @morojs/cli build --target=lambda --minify
 
 # Security scan
-morojs-cli security:scan
+npx @morojs/cli security:scan
 ```
+
+### Global Options
+
+```bash
+--verbose    Enable verbose (debug) logging
+--quiet      Suppress all output except errors
+```
+
+`--verbose` and `--quiet` are mutually exclusive — passing both errors out.
 
 ## Project Templates
 
 ### API Server
 
 ```bash
-morojs-cli init my-api --template=api --runtime=node --database=postgresql --validation=zod
+npx @morojs/cli init my-api --template=api --database=postgresql --validation=zod
 ```
 
 Perfect for REST APIs, GraphQL servers, and backend services.
@@ -161,7 +185,7 @@ Perfect for REST APIs, GraphQL servers, and backend services.
 ### Microservice
 
 ```bash
-morojs-cli init my-service --template=microservice --runtime=vercel-edge --validation=yup
+npx @morojs/cli init my-service --template=microservice --runtime=vercel-edge --validation=yup
 ```
 
 Lightweight services optimized for serverless deployment.
@@ -169,7 +193,7 @@ Lightweight services optimized for serverless deployment.
 ### Real-time Application
 
 ```bash
-morojs-cli init my-chat --features=websocket,auth --websocket=socket.io --validation=joi
+npx @morojs/cli init my-chat --features=websocket,auth --websocket=socket.io --validation=joi
 ```
 
 Real-time applications with WebSocket support and flexible validation.
@@ -177,72 +201,89 @@ Real-time applications with WebSocket support and flexible validation.
 ### Full-stack
 
 ```bash
-morojs-cli init my-app --template=fullstack --features=auth,websocket,docs --validation=multiple
+npx @morojs/cli init my-app --template=fullstack --features=auth,websocket,docs --validation=multiple
 ```
 
 Complete application with frontend integration support and all validation libraries.
 
 ## Runtime Adapters
 
-| Runtime                | Description                            | Deploy Command              |
-| ---------------------- | -------------------------------------- | --------------------------- |
-| **Node.js**            | Traditional server deployment          | `node dist/index.js`        |
-| **Vercel Edge**        | Edge runtime with global distribution  | `morojs-cli deploy vercel`  |
-| **AWS Lambda**         | Serverless functions with auto-scaling | `morojs-cli deploy lambda`  |
-| **Cloudflare Workers** | Edge workers with V8 isolates          | `morojs-cli deploy workers` |
+| Runtime                | Description                            | Deploy Command                   |
+| ---------------------- | -------------------------------------- | -------------------------------- |
+| **Node.js** (default)  | Traditional server deployment          | `node dist/index.js`             |
+| **Vercel Edge**        | Edge runtime with global distribution  | `npx @morojs/cli deploy vercel`  |
+| **AWS Lambda**         | Serverless functions with auto-scaling | `npx @morojs/cli deploy lambda`  |
+| **Cloudflare Workers** | Edge workers with V8 isolates          | `npx @morojs/cli deploy workers` |
 
 ## Database Support
 
-- **PostgreSQL** - Full-featured relational database
-- **MySQL/MariaDB** - Popular relational database
-- **SQLite** - Lightweight embedded database
-- **MongoDB** - Document-oriented database
-- **Redis** - In-memory data structure store
-- **Drizzle ORM** - Type-safe database toolkit
+- **PostgreSQL** — Full-featured relational database
+- **MySQL/MariaDB** — Popular relational database
+- **SQLite** — Lightweight embedded database
+- **MongoDB** — Document-oriented database
+- **Redis** — In-memory data structure store
+- **Drizzle ORM** — Type-safe database toolkit
+- **None** — Skip database setup entirely
 
 ## WebSocket Support
 
-- **Auto-detect** - Automatically detects and uses available WebSocket libraries
-- **Socket.IO** - Feature-rich with rooms, namespaces, and real-time communication
-- **Native ws** - Lightweight, standards-compliant WebSocket implementation
-- **None** - Skip WebSocket dependencies for minimal builds
+- **Auto-detect** — Automatically picks an available WebSocket library (default)
+- **Socket.IO** — Feature-rich with rooms, namespaces, and real-time communication
+- **Native ws** — Lightweight, standards-compliant WebSocket implementation
+- **None** — Skip WebSocket dependencies for minimal builds
 
 ## Validation Libraries
 
-- **Zod** - Type-safe validation with TypeScript integration (recommended)
-- **Joi** - Mature validation library with extensive features
-- **Yup** - Simple and popular validation library
-- **Class Validator** - Decorator-based validation for TypeScript classes
-- **Multiple** - Install all libraries for maximum flexibility
+- **Zod** (default) — Type-safe validation with TypeScript integration
+- **Joi** — Mature validation library with extensive features
+- **Yup** — Simple and popular validation library
+- **Class Validator** — Decorator-based validation for TypeScript classes
+- **Multiple** — Install all libraries for maximum flexibility
 
 ## Built-in Middleware
 
-- **Authentication** - JWT, Session, OAuth support
-- **CORS** - Cross-Origin Resource Sharing
-- **Rate Limiting** - Request throttling and protection
-- **Caching** - Response caching (Memory, Redis, File)
-- **Validation** - Universal validation (Zod, Joi, Yup, Class Validator)
-- **Security Headers** - Helmet.js integration
-- **Compression** - Gzip/Brotli response compression
-- **Session Management** - Secure session handling
-- **CSRF Protection** - Cross-Site Request Forgery prevention
+- **Authentication** — JWT, Session, OAuth support
+- **CORS** — Cross-Origin Resource Sharing
+- **Rate Limiting** — Request throttling and protection
+- **Caching** — Response caching (Memory, Redis, File)
+- **Validation** — Universal validation (Zod, Joi, Yup, Class Validator)
+- **Security Headers** — Helmet.js integration
+- **Compression** — Gzip/Brotli response compression
+- **Session Management** — Secure session handling
+- **CSRF Protection** — Cross-Site Request Forgery prevention
 
 ## Examples
+
+### Preview a project before creating it
+
+```bash
+npx @morojs/cli init my-api --fast --dry-run
+```
+
+Prints the resolved config, the file tree that _would_ be created, and the equivalent non-interactive command — without touching the filesystem.
+
+### Use pnpm instead of npm
+
+```bash
+npx @morojs/cli init my-api --fast --package-manager=pnpm
+# or invoke via pnpm and let the CLI auto-detect:
+pnpm dlx @morojs/cli init my-api --fast
+```
 
 ### Create a User Management API
 
 ```bash
 # Initialize project with Joi validation
-morojs-cli init user-api --runtime=node --database=postgresql --features=auth,docs --validation=joi
+npx @morojs/cli init user-api --database=postgresql --features=auth,docs --validation=joi
 
 # Create users module
-morojs-cli module create users --features=database,auth,cache --middleware=rate-limit --with-tests
+npx @morojs/cli module create users --features=database,auth,cache --middleware=rate-limit --with-tests
 
 # Setup database
-morojs-cli db setup postgresql --host=localhost --database=userapi --with-migrations
+npx @morojs/cli db setup postgresql --host=localhost --database=userapi --with-migrations
 
 # Add authentication middleware
-morojs-cli middleware add auth --config='{"strategy":"jwt","expiresIn":"7d"}'
+npx @morojs/cli middleware add auth --config='{"strategy":"jwt","expiresIn":"7d"}'
 
 # Start development
 npm run dev
@@ -252,13 +293,13 @@ npm run dev
 
 ```bash
 # Create lightweight service
-morojs-cli init payment-service --template=microservice --runtime=aws-lambda --database=redis
+npx @morojs/cli init payment-service --template=microservice --runtime=aws-lambda --database=redis
 
 # Create payment module
-morojs-cli module create payments --features=validation,cache --middleware=rate-limit
+npx @morojs/cli module create payments --features=validation,cache --middleware=rate-limit
 
 # Setup deployment
-morojs-cli deploy lambda --region=us-east-1 --memory=512
+npx @morojs/cli deploy lambda --region=us-east-1 --memory=512
 
 # Deploy
 npm run deploy:lambda
@@ -268,13 +309,14 @@ npm run deploy:lambda
 
 ```bash
 # Create full-stack app with Socket.IO and multiple validation libraries
-morojs-cli init chat-app --template=fullstack --features=websocket,auth,docs --database=mongodb --websocket=socket.io --validation=multiple
+npx @morojs/cli init chat-app --template=fullstack --features=websocket,auth,docs \
+  --database=mongodb --websocket=socket.io --validation=multiple
 
 # Create chat module
-morojs-cli module create chat --features=websocket,database,auth --with-tests
+npx @morojs/cli module create chat --features=websocket,database,auth --with-tests
 
 # Create users module
-morojs-cli module create users --features=database,auth,validation --with-tests
+npx @morojs/cli module create users --features=database,auth,validation --with-tests
 
 # Start development
 npm run dev
@@ -308,33 +350,34 @@ REDIS_URL=redis://localhost:6379
 # Security
 JWT_SECRET=your-secret-key
 CORS_ORIGIN=https://yourdomain.com
+
+# Disable the update-notifier check
+NO_UPDATE_NOTIFIER=1
 ```
 
-## Development & Testing
+## Generated Project Scripts
 
-Generated projects include a complete development workflow:
-
-### Available Scripts
+Generated projects include a complete development workflow. Script names use whichever package manager you picked (`npm run`, `yarn`, or `pnpm`):
 
 ```bash
 # Development
 npm run dev                 # Start development server
-npm run build              # Build for production
+npm run build               # Build for production
 
 # Code Quality
-npm run validate           # Run all quality checks
-npm run lint               # ESLint with auto-fix
-npm run lint:check         # ESLint check only
-npm run format             # Prettier formatting
-npm run format:check       # Check formatting
-npm run typecheck          # TypeScript compilation check
+npm run validate            # Run all quality checks
+npm run lint                # ESLint with auto-fix
+npm run lint:check          # ESLint check only
+npm run format              # Prettier formatting
+npm run format:check        # Check formatting
+npm run typecheck           # TypeScript compilation check
 
 # Testing
-npm run test               # Run all tests
-npm run test:unit          # Unit tests only
-npm run test:integration   # Integration tests only
-npm run test:watch         # Watch mode
-npm run test:coverage      # Coverage report
+npm run test                # Run all tests
+npm run test:unit           # Unit tests only
+npm run test:integration    # Integration tests only
+npm run test:watch          # Watch mode
+npm run test:coverage       # Coverage report
 ```
 
 ### Quality Standards
@@ -347,7 +390,7 @@ All generated projects include:
 - **Jest** for testing with TypeScript support
 - **GitHub Actions** for CI/CD
 
-## 🤝 Contributing
+## Contributing
 
 We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
 
@@ -357,9 +400,9 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-## 📄 License
+## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
 
 ## Links
 
@@ -370,4 +413,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Built with ❤️ by the MoroJS Team**
+**Built by the MoroJS Team**

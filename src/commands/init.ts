@@ -11,56 +11,224 @@ import figlet from 'figlet';
 import { runTerminalCmd } from '../utils/terminal';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { validateChoice, validateList } from '../utils/options';
+import {
+  PACKAGE_MANAGERS,
+  PackageManager,
+  detectPackageManager,
+  commandsFor,
+} from '../utils/package-manager';
+import { assertValidProjectName } from '../utils/project-name';
 
 const execAsync = promisify(exec);
 
+// Allowed values – kept as `as const` for both type narrowing and runtime validation.
+const RUNTIMES = ['node', 'vercel-edge', 'aws-lambda', 'cloudflare-workers'] as const;
+const DATABASES = ['mysql', 'postgresql', 'sqlite', 'mongodb', 'redis', 'drizzle', 'none'] as const;
+const WEBSOCKETS = ['auto-detect', 'socket.io', 'ws', 'none'] as const;
+const VALIDATIONS = ['zod', 'joi', 'yup', 'class-validator', 'multiple'] as const;
+const TEMPLATES = ['api', 'fullstack', 'microservice'] as const;
+const FEATURES = [
+  'auth',
+  'cors',
+  'helmet',
+  'compression',
+  'websocket',
+  'docs',
+  'rate-limit',
+  'cache',
+  'circuit-breaker',
+  'monitoring',
+  'testing',
+] as const;
+
+export type Runtime = (typeof RUNTIMES)[number];
+export type Database = (typeof DATABASES)[number];
+export type WebSocketAdapter = (typeof WEBSOCKETS)[number];
+export type ValidationLib = (typeof VALIDATIONS)[number];
+export type Template = (typeof TEMPLATES)[number];
+
 export interface ProjectInitOptions {
-  runtime?: 'node' | 'vercel-edge' | 'aws-lambda' | 'cloudflare-workers';
-  database?: 'mysql' | 'postgresql' | 'sqlite' | 'mongodb' | 'redis' | 'drizzle';
+  runtime?: Runtime;
+  database?: Database;
   features?: string;
-  websocket?: 'auto-detect' | 'socket.io' | 'ws' | 'none';
-  validation?: 'zod' | 'joi' | 'yup' | 'class-validator' | 'multiple';
-  template?: 'api' | 'fullstack' | 'microservice';
+  websocket?: WebSocketAdapter;
+  validation?: ValidationLib;
+  template?: Template;
+  packageManager?: PackageManager;
+  fast?: boolean;
+  force?: boolean;
+  dryRun?: boolean;
   skipGit?: boolean;
   skipInstall?: boolean;
+}
+
+// Resolved configuration after merging flags + prompts + defaults.
+export interface ResolvedConfig {
+  runtime: Runtime;
+  database: Database;
+  template: Template;
+  validation: ValidationLib;
+  websocket: WebSocketAdapter;
+  websocketAdapter: WebSocketAdapter;
+  features: string[];
+  packageManager: PackageManager;
+  fast: boolean;
+  force: boolean;
+  dryRun: boolean;
+  skipGit: boolean;
+  skipInstall: boolean;
+}
+
+// Sensible defaults applied when running in non-interactive mode
+const NON_INTERACTIVE_DEFAULTS = {
+  runtime: 'node' as Runtime,
+  database: 'none' as Database,
+  template: 'api' as Template,
+  validation: 'zod' as ValidationLib,
+  websocket: 'auto-detect' as WebSocketAdapter,
+  features: [] as string[],
+};
+
+// Returns true if the user passed any init-relevant flag, OR --fast
+function isNonInteractive(options: ProjectInitOptions): boolean {
+  if (options.fast) return true;
+  return (
+    options.runtime !== undefined ||
+    options.database !== undefined ||
+    options.features !== undefined ||
+    options.websocket !== undefined ||
+    options.validation !== undefined ||
+    options.template !== undefined
+  );
+}
+
+/**
+ * Validates every flag value the user passed so we fail fast (with a friendly
+ * "did you mean ...?" suggestion) instead of silently ignoring typos.
+ */
+function validateInitFlags(options: ProjectInitOptions): void {
+  validateChoice({ name: 'runtime', value: options.runtime, allowed: RUNTIMES });
+  validateChoice({ name: 'database', value: options.database, allowed: DATABASES });
+  validateChoice({ name: 'websocket', value: options.websocket, allowed: WEBSOCKETS });
+  validateChoice({ name: 'validation', value: options.validation, allowed: VALIDATIONS });
+  validateChoice({ name: 'template', value: options.template, allowed: TEMPLATES });
+  validateChoice({
+    name: 'package-manager',
+    value: options.packageManager,
+    allowed: PACKAGE_MANAGERS,
+  });
+  if (options.features) {
+    validateList({ name: 'features', value: options.features, allowed: FEATURES });
+  }
+}
+
+/**
+ * Re-builds the equivalent non-interactive command from the resolved config,
+ * omitting any flag that matches the CLI's implicit default. Used to teach
+ * users the flag form after they've completed an interactive run.
+ */
+export function buildEquivalentCommand(projectName: string, config: ResolvedConfig): string {
+  const flags: string[] = [];
+  if (config.template && config.template !== NON_INTERACTIVE_DEFAULTS.template) {
+    flags.push(`--template=${config.template}`);
+  }
+  if (config.runtime && config.runtime !== NON_INTERACTIVE_DEFAULTS.runtime) {
+    flags.push(`--runtime=${config.runtime}`);
+  }
+  if (config.database && config.database !== NON_INTERACTIVE_DEFAULTS.database) {
+    flags.push(`--database=${config.database}`);
+  }
+  if (config.validation && config.validation !== NON_INTERACTIVE_DEFAULTS.validation) {
+    flags.push(`--validation=${config.validation}`);
+  }
+  if (
+    config.features.includes('websocket') &&
+    config.websocketAdapter &&
+    config.websocketAdapter !== NON_INTERACTIVE_DEFAULTS.websocket
+  ) {
+    flags.push(`--websocket=${config.websocketAdapter}`);
+  }
+  if (config.features.length > 0) {
+    flags.push(`--features=${config.features.join(',')}`);
+  }
+  if (config.packageManager !== 'npm') {
+    flags.push(`--package-manager=${config.packageManager}`);
+  }
+  if (flags.length === 0) flags.push('--fast');
+  return ['npx @morojs/cli init', projectName, ...flags].join(' ');
 }
 
 export class ProjectInitializer {
   private logger = createFrameworkLogger('ProjectInitializer');
 
   async initializeProject(projectName: string, options: ProjectInitOptions): Promise<void> {
+    // Validate input up-front so we fail fast with friendly errors instead
+    // of half-creating a broken project.
+    const { warnings } = assertValidProjectName(projectName);
+    validateInitFlags(options);
+
     // Welcome banner
     console.log(chalk.cyan(figlet.textSync('MoroJS', { horizontalLayout: 'full' })));
     console.log(
-      boxen(chalk.green('Creating your magical MoroJS project...'), {
-        padding: 1,
-        margin: 1,
-        borderStyle: 'round',
-        borderColor: 'green',
-      })
+      boxen(
+        chalk.green(
+          options.dryRun
+            ? 'Previewing your MoroJS project (dry run – nothing will be written)...'
+            : 'Creating your magical MoroJS project...'
+        ),
+        {
+          padding: 1,
+          margin: 1,
+          borderStyle: 'round',
+          borderColor: 'green',
+        }
+      )
     );
 
+    for (const warning of warnings) {
+      this.logger.warn(`Project name warning: ${warning}`, 'Init');
+    }
+
     const projectPath = resolve(process.cwd(), projectName);
+    const nonInteractive = isNonInteractive(options);
 
-    // Check if directory already exists
-    if (existsSync(projectPath)) {
-      const { overwrite } = await inquirer.prompt([
-        {
-          type: 'confirm',
-          name: 'overwrite',
-          message: `Directory "${projectName}" already exists. Overwrite?`,
-          default: false,
-        },
-      ]);
+    // Check if directory already exists (skip in dry-run – we won't write anyway).
+    if (!options.dryRun && existsSync(projectPath)) {
+      if (nonInteractive) {
+        if (!options.force) {
+          this.logger.error(
+            `Directory "${projectName}" already exists. Use --force to overwrite, or pick a different name.`,
+            'Init'
+          );
+          return;
+        }
+        this.logger.warn(`Overwriting existing directory "${projectName}" (--force).`, 'Init');
+      } else {
+        const { overwrite } = await inquirer.prompt([
+          {
+            type: 'confirm',
+            name: 'overwrite',
+            message: `Directory "${projectName}" already exists. Overwrite?`,
+            default: false,
+          },
+        ]);
 
-      if (!overwrite) {
-        this.logger.info('Project initialization cancelled.', 'Init');
-        return;
+        if (!overwrite) {
+          this.logger.info('Project initialization cancelled.', 'Init');
+          return;
+        }
       }
     }
 
-    // Interactive prompts if options not provided
-    const config = await this.gatherProjectConfig(options);
+    // Interactive prompts (only when no flags provided and --fast not set)
+    const config = await this.gatherProjectConfig(options, nonInteractive);
+
+    // Dry run: stop here and just preview what would be generated.
+    if (options.dryRun) {
+      this.displayDryRunPreview(projectName, config);
+      return;
+    }
 
     const spinner = ora('Creating project structure...').start();
 
@@ -98,44 +266,156 @@ export class ProjectInitializer {
         }
       }
 
-      // Install dependencies
+      // Install dependencies using the chosen package manager
+      const pmCmds = commandsFor(config.packageManager);
       if (!config.skipInstall) {
-        const installSpinner = ora('Installing dependencies...').start();
+        const installSpinner = ora(
+          `Installing dependencies with ${config.packageManager}...`
+        ).start();
         try {
-          await runTerminalCmd('npm install', { cwd: projectPath });
+          await runTerminalCmd(pmCmds.install, { cwd: projectPath });
           installSpinner.succeed('Dependencies installed!');
         } catch (error) {
-          installSpinner.fail('Failed to install dependencies. Run "npm install" manually.');
+          installSpinner.fail(`Failed to install dependencies. Run "${pmCmds.install}" manually.`);
         }
       }
 
       // Success message with next steps
       this.displaySuccessMessage(projectName, config);
+
+      // Teach users the non-interactive flag form they could have used.
+      if (!nonInteractive) {
+        const equivalent = buildEquivalentCommand(projectName, config);
+        console.log(
+          chalk.gray(
+            `\nTip: re-run the same setup non-interactively with:\n  ${chalk.cyan(equivalent)}\n`
+          )
+        );
+      }
     } catch (error) {
       spinner.fail('Project creation failed!');
       throw error;
     }
   }
 
-  private async gatherProjectConfig(
-    options: ProjectInitOptions
-  ): Promise<Required<ProjectInitOptions> & { features: string[]; websocketAdapter: string }> {
-    const questions = [];
+  /**
+   * Prints the file structure, config and command that *would* result from
+   * running `init` with the given options – without touching the filesystem.
+   */
+  private displayDryRunPreview(projectName: string, config: ResolvedConfig): void {
+    const pmCmds = commandsFor(config.packageManager);
+    const lines: string[] = [];
 
-    if (!options.runtime) {
-      questions.push({
-        type: 'list',
-        name: 'runtime',
-        message: 'Select runtime adapter:',
-        choices: [
-          { name: ' Node.js (Traditional server)', value: 'node' },
-          { name: 'Vercel Edge (Edge runtime)', value: 'vercel-edge' },
-          { name: 'AWS Lambda (Serverless)', value: 'aws-lambda' },
-          { name: ' Cloudflare Workers (Edge workers)', value: 'cloudflare-workers' },
-        ],
-        default: 'node',
-      });
+    lines.push(chalk.bold.cyan('Dry run preview – no files written.'));
+    lines.push('');
+    lines.push(chalk.bold('Resolved configuration:'));
+    lines.push(`  template          ${config.template}`);
+    lines.push(`  runtime           ${config.runtime}`);
+    lines.push(`  database          ${config.database}`);
+    lines.push(`  validation        ${config.validation}`);
+    lines.push(`  websocket         ${config.websocket}`);
+    lines.push(
+      `  features          ${config.features.length ? config.features.join(', ') : '(none)'}`
+    );
+    lines.push(`  package manager   ${config.packageManager}`);
+    lines.push(`  skip git          ${config.skipGit}`);
+    lines.push(`  skip install      ${config.skipInstall}`);
+    lines.push('');
+    lines.push(chalk.bold('Files that would be created:'));
+    for (const file of this.previewFileTree(projectName, config)) {
+      lines.push(`  ${file}`);
     }
+    lines.push('');
+    lines.push(chalk.bold('Equivalent non-interactive command:'));
+    lines.push(`  ${chalk.cyan(buildEquivalentCommand(projectName, config))}`);
+    lines.push('');
+    lines.push(chalk.gray(`Re-run without --dry-run to actually create the project.`));
+    lines.push(chalk.gray(`Install will use: ${pmCmds.install}`));
+
+    console.log(
+      boxen(lines.join('\n'), {
+        padding: 1,
+        margin: 1,
+        borderStyle: 'round',
+        borderColor: 'cyan',
+      })
+    );
+  }
+
+  /**
+   * Static preview of the file tree based on config – mirrors what the
+   * generators would actually create.
+   */
+  private previewFileTree(projectName: string, config: ResolvedConfig): string[] {
+    const files: string[] = [
+      `${projectName}/package.json`,
+      `${projectName}/tsconfig.json`,
+      `${projectName}/moro.config.ts`,
+      `${projectName}/.env`,
+      `${projectName}/.env.example`,
+      `${projectName}/.gitignore`,
+      `${projectName}/README.md`,
+      `${projectName}/src/index.ts`,
+      `${projectName}/src/modules/.gitkeep`,
+      `${projectName}/src/middleware/.gitkeep`,
+      `${projectName}/src/types/index.ts`,
+    ];
+    if (config.runtime === 'node') files.push(`${projectName}/Dockerfile`);
+    if (config.database !== 'none') files.push(`${projectName}/src/database/index.ts`);
+    if (config.features.includes('auth')) files.push(`${projectName}/src/middleware/auth.ts`);
+    if (config.features.includes('websocket')) files.push(`${projectName}/src/websockets/index.ts`);
+    if (config.features.includes('testing')) files.push(`${projectName}/tests/app.test.ts`);
+    if (config.validation && config.validation !== 'multiple')
+      files.push(`${projectName}/src/validation/examples.ts`);
+    return files;
+  }
+
+  private async gatherProjectConfig(
+    options: ProjectInitOptions,
+    nonInteractive: boolean
+  ): Promise<ResolvedConfig> {
+    const packageManager: PackageManager = options.packageManager ?? detectPackageManager();
+
+    // Non-interactive path: any provided flag wins, the rest take sensible defaults.
+    if (nonInteractive) {
+      const selectedFeatures = options.features
+        ? options.features
+            .split(',')
+            .map(f => f.trim())
+            .filter(Boolean)
+        : NON_INTERACTIVE_DEFAULTS.features;
+
+      const websocketAdapter: WebSocketAdapter =
+        options.websocket || NON_INTERACTIVE_DEFAULTS.websocket;
+
+      const summary: ResolvedConfig = {
+        runtime: options.runtime || NON_INTERACTIVE_DEFAULTS.runtime,
+        database: options.database || NON_INTERACTIVE_DEFAULTS.database,
+        template: options.template || NON_INTERACTIVE_DEFAULTS.template,
+        features: selectedFeatures,
+        websocket: websocketAdapter,
+        websocketAdapter,
+        validation: options.validation || NON_INTERACTIVE_DEFAULTS.validation,
+        packageManager,
+        fast: options.fast || false,
+        force: options.force || false,
+        dryRun: options.dryRun || false,
+        skipGit: options.skipGit || false,
+        skipInstall: options.skipInstall || false,
+      };
+
+      this.logger.info(
+        `Non-interactive mode: runtime=${summary.runtime}, template=${summary.template}, database=${summary.database}, validation=${summary.validation}, websocket=${summary.websocket}, features=[${summary.features.join(',') || 'none'}], packageManager=${summary.packageManager}`,
+        'Init'
+      );
+
+      return summary;
+    }
+
+    // Interactive path: only prompt for what wasn't provided.
+    // Note: `runtime` always defaults to 'node' and is NOT prompted.
+    // Override with `--runtime=...` to target a different adapter.
+    const questions = [];
 
     if (!options.database) {
       questions.push({
@@ -191,11 +471,14 @@ export class ProjectInitializer {
     const answers = await inquirer.prompt(questions);
 
     const selectedFeatures = options.features
-      ? options.features.split(',')
+      ? options.features
+          .split(',')
+          .map(f => f.trim())
+          .filter(Boolean)
       : answers.features || [];
 
     // Ask for WebSocket adapter if WebSocket support is selected and not provided via CLI
-    let websocketAdapter = options.websocket || 'auto-detect';
+    let websocketAdapter: WebSocketAdapter = options.websocket || 'auto-detect';
     if (selectedFeatures.includes('websocket') && !options.websocket) {
       const wsQuestion = await inquirer.prompt([
         {
@@ -215,7 +498,7 @@ export class ProjectInitializer {
     }
 
     // Ask for validation library preference if not provided via CLI
-    let validationLibrary = options.validation || 'zod';
+    let validationLibrary: ValidationLib = options.validation || 'zod';
     if (!options.validation) {
       const validationQuestion = await inquirer.prompt([
         {
@@ -235,17 +518,22 @@ export class ProjectInitializer {
       validationLibrary = validationQuestion.validation;
     }
 
-    return {
-      runtime: options.runtime || answers.runtime,
+    const resolved: ResolvedConfig = {
+      runtime: options.runtime || NON_INTERACTIVE_DEFAULTS.runtime,
       database: options.database || answers.database,
       template: options.template || answers.template,
       features: selectedFeatures,
       websocket: websocketAdapter,
       websocketAdapter,
       validation: validationLibrary,
+      packageManager,
+      fast: options.fast || false,
+      force: options.force || false,
+      dryRun: options.dryRun || false,
       skipGit: options.skipGit || false,
       skipInstall: options.skipInstall || false,
     };
+    return resolved;
   }
 
   private async generatePackageJson(
@@ -1111,8 +1399,9 @@ Thumbs.db
   private async generateReadme(
     projectPath: string,
     projectName: string,
-    config: any
+    config: ResolvedConfig
   ): Promise<void> {
+    const pmCmds = commandsFor(config.packageManager);
     const readmeContent = `# ${projectName}
 
 **MoroJS ${config.template.charAt(0).toUpperCase() + config.template.slice(1)} Project**
@@ -1143,16 +1432,16 @@ ${config.features
 
 \`\`\`bash
 # Install dependencies
-npm install
+${pmCmds.install}
 
 # Start development server
-npm run dev
+${pmCmds.run('dev')}
 
 # Build for production
-npm run build
+${pmCmds.run('build')}
 
 # Start production server
-npm start
+${pmCmds.run('start')}
 \`\`\`
 
 ## Endpoints
@@ -1192,26 +1481,26 @@ This project uses **${config.database}** as the primary database.
 
 \`\`\`bash
 # Run migrations
-npm run db:migrate
+${pmCmds.run('db:migrate')}
 
 # Seed database
-npm run db:seed
+${pmCmds.run('db:seed')}
 \`\`\`
 `
-    : 'No database configured. Add one with `morojs-cli db setup <type>`.'
+    : 'No database configured. Add one with `npx @morojs/cli db setup <type>`.'
 }
 
 ## Development
 
 \`\`\`bash
 # Development with hot reload
-npm run dev
+${pmCmds.run('dev')}
 
 # Run tests
-npm test
+${pmCmds.run('test')}
 
 # Lint code
-npm run lint
+${pmCmds.run('lint')}
 \`\`\`
 
 ## Module Development
@@ -1220,10 +1509,10 @@ Create new modules with the MoroJS CLI:
 
 \`\`\`bash
 # Create a new module
-morojs-cli module create users --features=database,auth,cache
+npx @morojs/cli module create users --features=database,auth,cache
 
 # List all modules
-morojs-cli module list
+npx @morojs/cli module list
 \`\`\`
 
 ## Deployment
@@ -1234,7 +1523,7 @@ ${
 ### Vercel Edge Runtime
 
 \`\`\`bash
-npm run deploy:vercel
+${pmCmds.run('deploy:vercel')}
 \`\`\`
 `
     : ''
@@ -1245,7 +1534,7 @@ ${
 ### AWS Lambda
 
 \`\`\`bash
-npm run deploy:lambda
+${pmCmds.run('deploy:lambda')}
 \`\`\`
 `
     : ''
@@ -1256,7 +1545,7 @@ ${
 ### Cloudflare Workers
 
 \`\`\`bash
-npm run deploy:workers
+${pmCmds.run('deploy:workers')}
 \`\`\`
 `
     : ''
@@ -2558,7 +2847,8 @@ describe('API Health Checks', () => {
     await writeFile(join(projectPath, 'tests', 'app.test.ts'), testContent);
   }
 
-  private displaySuccessMessage(projectName: string, config: any): void {
+  private displaySuccessMessage(projectName: string, config: ResolvedConfig): void {
+    const pmCmds = commandsFor(config.packageManager);
     console.log(
       boxen(
         chalk.green(`
@@ -2579,13 +2869,12 @@ Project Structure:
 
 Next Steps:
    cd ${projectName}
-   ${config.skipInstall ? 'npm install' : ''}
-   npm run dev
+   ${config.skipInstall ? `${pmCmds.install}\n   ` : ''}${pmCmds.run('dev')}
 
 Resources:
    • Documentation: https://morojs.com
-   • Examples: morojs-cli examples
-   • Create modules: morojs-cli module create <name>
+   • Examples: npx @morojs/cli examples
+   • Create modules: npx @morojs/cli module create <name>
 
 Features Enabled:
 ${config.features.map((f: string) => `   • ${f}${f === 'websocket' ? ` (${config.websocketAdapter})` : ''}`).join('\n')}

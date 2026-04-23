@@ -46,6 +46,7 @@ describe('@morojs/cli', () => {
     test('should have correct bin configuration', () => {
       expect(packageJson.bin['morojs-cli']).toBe('./bin/cli.js');
       expect(packageJson.bin['moro-cli']).toBe('./bin/cli.js');
+      expect(packageJson.bin['moro']).toBe('./bin/cli.js');
     });
 
     test('should have proper ES module exports', () => {
