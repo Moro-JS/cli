@@ -2,16 +2,17 @@
 #
 # MoroJS CLI Release Publish Script
 #
-# Post-step for `npm run prepare-release`. This script:
-#   1. Reads the version from package.json
-#   2. Verifies the working tree is clean and on the expected branch
-#   3. Verifies the tag doesn't already exist (locally or on origin)
-#   4. Pushes the branch to origin
-#   5. Creates an annotated `vX.Y.Z` tag and pushes it
-#   6. Creates a GitHub Release (which triggers .github/workflows/publish.yml)
+# Reads the version from package.json, then commits whatever you've STAGED,
+# tags `vX.Y.Z`, pushes branch + tag, and opens a GitHub Release (which
+# triggers .github/workflows/publish.yml to publish to npm).
+#
+# Workflow:
+#   1. You bump the version in package.json (and any other release changes)
+#   2. You stage them:   git add -A   (or just the files you want)
+#   3. You publish:      npm run publish-release
 #
 # Usage:
-#   npm run publish-release                # publish current package.json version
+#   npm run publish-release                # commit staged + tag + push + release
 #   npm run publish-release -- --dry-run   # show what would happen, change nothing
 #   npm run publish-release -- --no-release # push tag only, skip GitHub Release
 #
@@ -31,7 +32,7 @@ for arg in "$@"; do
     --dry-run) DRY_RUN=1 ;;
     --no-release) SKIP_RELEASE=1 ;;
     -h|--help)
-      sed -n '2,20p' "$0"
+      sed -n '2,22p' "$0"
       exit 0
       ;;
     *)
@@ -62,13 +63,18 @@ if [ ! -f package.json ]; then
   exit 1
 fi
 
+# --- Read version from package.json -----------------------------------------
+
 VERSION="$(node -p "require('./package.json').version")"
-PKG_NAME="$(node -p "require('./package.json').name")"
+
+if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+  echo "package.json version '${VERSION}' is not a valid semver triple." >&2
+  exit 1
+fi
+
 TAG="v${VERSION}"
 
-step "Publishing ${PKG_NAME}@${VERSION} (tag: ${TAG})"
-
-# --- Preflight checks -------------------------------------------------------
+# --- Preflight: git state ---------------------------------------------------
 
 step "Checking git state"
 
@@ -84,19 +90,27 @@ fi
 
 CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 if [ "$CURRENT_BRANCH" != "$RELEASE_BRANCH" ]; then
-  echo "Refusing to release: on branch '${CURRENT_BRANCH}', expected '${RELEASE_BRANCH}'." >&2
+  echo "Refusing to publish: on branch '${CURRENT_BRANCH}', expected '${RELEASE_BRANCH}'." >&2
   echo "  Override with: RELEASE_BRANCH=${CURRENT_BRANCH} npm run publish-release" >&2
   exit 1
 fi
 
-if [ -n "$(git status --porcelain)" ]; then
-  echo "Refusing to release: working tree has uncommitted changes." >&2
-  echo "  Commit or stash them first." >&2
-  git status --short >&2
+# Must have staged changes — that's what we're committing.
+if git diff --cached --quiet; then
+  echo "Nothing is staged. Stage your release changes first:" >&2
+  echo "  git add -A" >&2
   exit 1
 fi
 
-# Make sure we have the latest remote refs (and that origin exists).
+# Warn (don't fail) on unstaged or untracked files — they won't make the cut.
+UNSTAGED="$(git diff --name-only)"
+UNTRACKED="$(git ls-files --others --exclude-standard)"
+if [ -n "$UNSTAGED" ] || [ -n "$UNTRACKED" ]; then
+  echo "  WARNING: the following changes are NOT staged and will not be in the release commit:"
+  [ -n "$UNSTAGED" ]  && echo "$UNSTAGED"  | sed 's/^/    M /'
+  [ -n "$UNTRACKED" ] && echo "$UNTRACKED" | sed 's/^/    ? /'
+fi
+
 if ! git remote get-url "$GIT_REMOTE" >/dev/null 2>&1; then
   echo "Remote '${GIT_REMOTE}' is not configured." >&2
   exit 1
@@ -104,17 +118,7 @@ fi
 
 git fetch --tags "$GIT_REMOTE" >/dev/null
 
-if git rev-parse "$TAG" >/dev/null 2>&1; then
-  echo "Tag '${TAG}' already exists locally. Aborting." >&2
-  exit 1
-fi
-
-if git ls-remote --tags --exit-code "$GIT_REMOTE" "$TAG" >/dev/null 2>&1; then
-  echo "Tag '${TAG}' already exists on '${GIT_REMOTE}'. Aborting." >&2
-  exit 1
-fi
-
-# Make sure local branch is up to date with the remote tip.
+# Local must not be behind remote.
 LOCAL_SHA="$(git rev-parse HEAD)"
 REMOTE_SHA="$(git rev-parse "${GIT_REMOTE}/${RELEASE_BRANCH}" 2>/dev/null || true)"
 if [ -n "$REMOTE_SHA" ] && [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
@@ -125,15 +129,32 @@ if [ -n "$REMOTE_SHA" ] && [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
   fi
 fi
 
-# --- Push branch ------------------------------------------------------------
+# Tag must not already exist.
+if git rev-parse "$TAG" >/dev/null 2>&1; then
+  echo "Tag '${TAG}' already exists locally. Bump the version in package.json first." >&2
+  exit 1
+fi
+if git ls-remote --tags --exit-code "$GIT_REMOTE" "$TAG" >/dev/null 2>&1; then
+  echo "Tag '${TAG}' already exists on '${GIT_REMOTE}'. Bump the version in package.json first." >&2
+  exit 1
+fi
 
-step "Pushing ${RELEASE_BRANCH} to ${GIT_REMOTE}"
-run "git push ${GIT_REMOTE} ${RELEASE_BRANCH}"
+step "Publishing @morojs/cli ${VERSION} (tag: ${TAG})"
 
-# --- Tag + push -------------------------------------------------------------
+# --- Commit staged changes --------------------------------------------------
+
+step "Committing chore(release): ${TAG}"
+run "git commit -m 'chore(release): ${TAG}'"
+
+# --- Tag --------------------------------------------------------------------
 
 step "Creating annotated tag ${TAG}"
 run "git tag -a ${TAG} -m 'Release ${TAG}'"
+
+# --- Push -------------------------------------------------------------------
+
+step "Pushing ${RELEASE_BRANCH} to ${GIT_REMOTE}"
+run "git push ${GIT_REMOTE} ${RELEASE_BRANCH}"
 
 step "Pushing tag ${TAG} to ${GIT_REMOTE}"
 run "git push ${GIT_REMOTE} ${TAG}"
@@ -142,7 +163,7 @@ run "git push ${GIT_REMOTE} ${TAG}"
 
 if [ "$SKIP_RELEASE" = "1" ]; then
   echo ""
-  echo "Skipping GitHub Release (--no-release). Tag pushed; you can create the release manually."
+  echo "Skipping GitHub Release (--no-release). Tag pushed; create the release manually if you want npm publish."
 else
   if ! command -v gh >/dev/null 2>&1; then
     echo ""
@@ -161,8 +182,11 @@ fi
 echo ""
 if [ "$DRY_RUN" = "1" ]; then
   echo "Dry run complete. No changes were made."
+  echo "Would have published: ${TAG}"
 else
-  echo "Release ${TAG} published."
+  echo "Released ${TAG}."
+  echo "  - Version:        ${VERSION}"
+  echo "  - Commit:         $(git rev-parse --short HEAD)"
   echo "  - Branch pushed:  ${GIT_REMOTE}/${RELEASE_BRANCH}"
   echo "  - Tag pushed:     ${TAG}"
   if [ "$SKIP_RELEASE" != "1" ]; then
