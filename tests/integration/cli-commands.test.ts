@@ -63,6 +63,7 @@ describe('CLI Commands Integration', () => {
       // Verify project structure
       expect(await fileExists(join(projectPath, 'package.json'))).toBe(true);
       expect(await fileExists(join(projectPath, 'src/index.ts'))).toBe(true);
+      expect(await fileExists(join(projectPath, 'src/routes/index.ts'))).toBe(true);
       expect(await fileExists(join(projectPath, 'tsconfig.json'))).toBe(true);
 
       // Verify package.json content

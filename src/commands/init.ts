@@ -356,6 +356,8 @@ export class ProjectInitializer {
       `${projectName}/.gitignore`,
       `${projectName}/README.md`,
       `${projectName}/src/index.ts`,
+      `${projectName}/src/routes/index.ts`,
+      `${projectName}/src/routes/health/index.ts`,
       `${projectName}/src/modules/.gitkeep`,
       `${projectName}/src/middleware/.gitkeep`,
       `${projectName}/src/types/index.ts`,
@@ -674,6 +676,10 @@ export class ProjectInitializer {
         noEmit: false,
         isolatedModules: true,
         verbatimModuleSyntax: true,
+        // Explicitly load Node's ambient globals (process, Buffer, ...). Under
+        // moduleResolution: 'bundler' the @types/* auto-include isn't reliable,
+        // so without this `process.env` in moro.config.ts reports TS2591.
+        types: ['node'],
       },
       include: ['src/**/*', 'moro.config.ts'],
       exclude: ['node_modules', 'dist', '**/*.test.ts', '**/*.spec.ts'],
@@ -686,167 +692,91 @@ export class ProjectInitializer {
     await mkdir(join(projectPath, 'src'), { recursive: true });
 
     const runtimeImports: Record<string, string> = {
-      node: 'createAppNode',
+      node: 'createApp',
       'vercel-edge': 'createAppEdge',
       'aws-lambda': 'createAppLambda',
       'cloudflare-workers': 'createAppWorker',
     };
 
-    const appContent = `// ${config.template.toUpperCase()} MoroJS Application
-import { ${runtimeImports[config.runtime as keyof typeof runtimeImports]}, logger, initializeConfig${config.features.includes('websocket') && config.websocketAdapter !== 'none' ? ', SocketIOAdapter, WSAdapter' : ''} } from '@morojs/moro';
-${config.database !== 'none' ? `import { setupDatabase } from './database/index.js';` : ''}
-${config.features.includes('auth') ? `import { setupAuth } from './middleware/auth.js';` : ''}
-${config.features.includes('websocket') ? `import { setupWebSockets } from './websockets/index.js';` : ''}
+    const createFn = runtimeImports[config.runtime as keyof typeof runtimeImports];
+    const hasWebSocket = config.features.includes('websocket');
+    const wsAdapterActive = hasWebSocket && config.websocketAdapter !== 'none';
+    const cap = config.template.charAt(0).toUpperCase() + config.template.slice(1);
 
-// Initialize configuration from moro.config.js and environment variables
-const appConfig = initializeConfig();
+    const isNode = config.runtime === 'node';
 
-// Create MoroJS application with ${config.runtime} runtime
-const app = await ${runtimeImports[config.runtime as keyof typeof runtimeImports]}({
-  ${config.features.includes('cors') ? `cors: true,` : ''}
-  ${config.features.includes('compression') ? `compression: true,` : ''}
-  ${config.features.includes('websocket') && config.websocketAdapter !== 'none' ? this.getWebSocketConfigString(config.websocketAdapter) : ''}
-  logger: {
-    level: appConfig.logging?.level || 'info',
-    format: appConfig.logging?.format || 'pretty'
-  }
-});
+    // Named imports from the framework – only pull in what's used. cors,
+    // compression and logging are NOT passed to createApp(): they're read from
+    // moro.config.ts automatically, so passing them here would be redundant.
+    const moroImports = [createFn, 'logger'];
+    if (wsAdapterActive) moroImports.push('SocketIOAdapter', 'WSAdapter');
 
-// Database setup
-${config.database !== 'none' ? `await setupDatabase(app);` : ''}
-
-// Auth setup
-${config.features.includes('auth') ? `await setupAuth(app);` : ''}
-
-// WebSocket setup
-${config.features.includes('websocket') ? `await setupWebSockets(app);` : ''}
-
-// Health check endpoint
-app.get('/health')
-  .describe('Health check endpoint to verify API status')
-  .tag('System')
-  .handler(async (req: any, res: any) => {
-    return {
-      success: true,
-      status: 'healthy',
-      timestamp: new Date().toISOString(),
-      runtime: '${config.runtime}',
-      version: '1.0.0'
-    };
-  });
-
-// Welcome endpoint
-app.get('/')
-  .describe('Welcome endpoint with API information and available routes')
-  .tag('General')
-  .handler(async (req: any, res: any) => {
-    return {
-      message: 'Welcome to your MoroJS ${config.template}!',
-      docs: '/docs',
-      health: '/health',
-      auth: {
-        login: '/auth/login',
-        register: '/auth/register',
-        profile: '/auth/profile'
-      }
-    };
-  });
-
-// Auth endpoints
-app.post('/auth/login')
-  .describe('Login with email and password')
-  .tag('Auth')
-  .handler(async (req: any, res: any) => {
-    const { email, password } = req.body;
-    if (!email || !password) {
-      res.status(400);
-      return {
-        success: false,
-        error: 'Email and password are required'
-      };
+    // Import lines, in order: framework then local (feature-gated).
+    const importLines = [`import { ${moroImports.join(', ')} } from '@morojs/moro';`];
+    if (config.database !== 'none') {
+      importLines.push(`import { setupDatabase } from './database/index.js';`);
+    }
+    if (config.features.includes('auth')) {
+      importLines.push(`import { setupAuth } from './middleware/auth.js';`);
+    }
+    if (hasWebSocket) {
+      importLines.push(`import { setupWebSockets } from './websockets/index.js';`);
+    }
+    // Node auto-loads route files from disk via app.loadRoutes(); other runtimes
+    // can't scan the filesystem, so they import the registrar statically.
+    if (!isNode) {
+      importLines.push(`import { registerRoutes } from './routes/index.js';`);
     }
 
-    try {
-      console.log('Login attempt:', { email });
-      const result = await req.auth.signIn('credentials', { email, password });
-      console.log('Login result:', { success: !!result });
-
-      if (!result) {
-        res.status(401);
-        return {
-          success: false,
-          error: 'Invalid credentials'
-        };
-      }
-
-      const token = await req.auth.createToken(result);
-      await req.auth.setSession({ user: result, token });
-
-      return {
-        success: true,
-        data: {
-          user: result,
-          token
-        }
-      };
-    } catch (error) {
-      console.error('Auth error:', error);
-      res.status(401);
-      return {
-        success: false,
-        error: 'Authentication failed'
-      };
+    // The only thing worth passing to createApp() is the WebSocket adapter
+    // instance – it can't be expressed in moro.config.ts. Everything else
+    // (server, cors, compression, logging, ...) comes from the config file.
+    const appOptions: string[] = [];
+    if (wsAdapterActive) {
+      appOptions.push(`  ${this.getWebSocketConfigString(config.websocketAdapter)}`);
     }
-  });
+    const createCall = appOptions.length
+      ? `const app = await ${createFn}({\n${appOptions.join('\n')}\n});`
+      : `const app = await ${createFn}();`;
 
-app.post('/auth/register')
-  .describe('Register a new user')
-  .tag('Auth')
-  .handler(async (req: any, res: any) => {
-    const { email, password, name } = req.body;
-    if (!email || !password || !name) {
-      res.status(400);
-      return {
-        success: false,
-        error: 'Email, password, and name are required'
-      };
+    // How src/routes gets wired in. On node it's automatic – createApp() scans
+    // ./src/routes on startup (config.routing, on by default). Serverless
+    // runtimes can't scan the filesystem, so they register explicitly.
+    const routesSection = isNode
+      ? ''
+      : `// Register top-level HTTP routes (health, welcome, ...). See src/routes.\n` +
+        `registerRoutes(app);`;
+
+    // Feature setup calls that run after the app is created.
+    const setupCalls: string[] = [];
+    if (config.database !== 'none') setupCalls.push('await setupDatabase(app);');
+    if (config.features.includes('auth')) setupCalls.push('await setupAuth(app);');
+    if (hasWebSocket) setupCalls.push('await setupWebSockets(app);');
+
+    // Build the file from sections so optional blocks never leave behind
+    // stray blank lines.
+    const sections: string[] = [];
+
+    sections.push(
+      `// ${config.template.toUpperCase()} MoroJS Application\n` + importLines.join('\n')
+    );
+
+    sections.push(
+      `// Create the MoroJS app. Server, cors, compression, logging and the rest\n` +
+        `// of the configuration are loaded automatically from moro.config.ts.\n` +
+        `${createCall}${isNode ? `\nconst appConfig = app.getConfig();` : ''}`
+    );
+
+    if (setupCalls.length) {
+      sections.push(`// Feature setup\n${setupCalls.join('\n')}`);
     }
 
-    // In a real app, you would hash the password and store in a database
-    return {
-      success: true,
-      message: 'Registration successful. Please login.'
-    };
-  });
+    if (routesSection) sections.push(routesSection);
 
-app.get('/auth/profile')
-  .describe('Get authenticated user profile')
-  .tag('Auth')
-  .handler(async (req: any, res: any) => {
-    const user = await req.auth.getUser();
-    if (!user) {
-      res.status(401);
-      return {
-        success: false,
-        error: 'Not authenticated'
-      };
-    }
-
-    return {
-      success: true,
-      data: {
-        user,
-        session: req.auth.session
-      }
-    };
-  });
-
-${
-  config.features.includes('docs')
-    ? `
-// API Documentation
+    if (config.features.includes('docs')) {
+      sections.push(`// API Documentation
 app.enableDocs({
-  title: '${config.template.charAt(0).toUpperCase() + config.template.slice(1)} API',
+  title: '${cap} API',
   description: 'MoroJS ${config.template} application',
   version: '1.0.0',
   basePath: '/docs',
@@ -859,44 +789,171 @@ app.enableDocs({
       .swagger-ui .scheme-container { display: none }
       .swagger-ui .info { margin: 20px 0 }
       .swagger-ui .info .title { font-size: 24px }
-      .swagger-ui .info .title small { display: none }
-      .swagger-ui .info .title span { display: none }
-      .swagger-ui .information-container { padding: 0 }
-      .swagger-ui section.models { display: none }
-      .swagger-ui .auth-wrapper { display: none }
-      .swagger-ui .try-out { display: none }
     \`
   },
-});
-`
-    : ''
-}
-// Auto-discover and load modules
-// Modules will be automatically loaded from ./modules directory
+});`);
+    }
 
-${
-  config.runtime === 'node'
-    ? `
-// Start server (Node.js only)
+    sections.push(
+      isNode
+        ? `// File-based auto-loading (on by default): route files in ./src/routes and\n` +
+            `// modules in ./src/modules are imported on startup. Add a route file, or run\n` +
+            `// 'npx @morojs/cli module create <name>', and it's registered automatically.`
+        : `// Modules in ./src/modules are auto-discovered. Create one with\n` +
+            `// 'npx @morojs/cli module create <name>' to add routes under /v{version}/{name}.`
+    );
+
+    if (config.runtime === 'node') {
+      const startLogs: string[] = [
+        `  logger.info(\`${cap} server running!\`);`,
+        '  logger.info(`HTTP: http://${HOST}:${PORT}`);',
+      ];
+      if (hasWebSocket) startLogs.push('  logger.info(`WebSocket: ws://${HOST}:${PORT}`);');
+      if (config.features.includes('docs')) {
+        startLogs.push('  logger.info(`Docs: http://${HOST}:${PORT}/docs`);');
+      }
+
+      sections.push(`// Start server (Node.js only)
 const PORT = appConfig.server?.port || 3000;
 const HOST = appConfig.server?.host || 'localhost';
 
 app.listen(PORT, HOST, () => {
-  logger.info(\`${config.template.charAt(0).toUpperCase() + config.template.slice(1)} server running!\`);
-  logger.info(\`HTTP: http://\${HOST}:\${PORT}\`);
-  ${config.features.includes('websocket') ? `logger.info(\`WebSocket: ws://\${HOST}:\${PORT}\`);` : ''}
-  ${config.features.includes('docs') ? `logger.info(\`Docs: http://\${HOST}:\${PORT}/docs\`);` : ''}
-});
-`
-    : `
-// Export handler for ${config.runtime}
-export default app.getHandler();
-`
+${startLogs.join('\n')}
+});`);
+    } else {
+      sections.push(`// Export handler for ${config.runtime}\nexport default app.getHandler();`);
+    }
+
+    sections.push('export { app };');
+
+    await writeFile(join(projectPath, 'src', 'index.ts'), sections.join('\n\n') + '\n');
+  }
+
+  private async generateRoutes(projectPath: string, config: any): Promise<void> {
+    const routesDir = join(projectPath, 'src', 'routes');
+    // Creates both src/routes and the src/routes/health subfolder.
+    await mkdir(join(routesDir, 'health'), { recursive: true });
+
+    const isNode = config.runtime === 'node';
+    const indentJoin = (arr: string[], indent: string) => arr.map(f => indent + f).join(',\n');
+
+    // --- /health route (lives in the ./health subfolder) ---
+    const healthFields = [
+      `success: true`,
+      `status: 'healthy'`,
+      `timestamp: new Date().toISOString()`,
+    ];
+    if (isNode) healthFields.push(`uptime: process.uptime()`); // Node-only API
+    healthFields.push(`runtime: '${config.runtime}'`, `version: '1.0.0'`);
+
+    const renderHealth = (pad: string): string => {
+      const p2 = pad + '  ';
+      const p3 = pad + '    ';
+      return `${pad}// Liveness/readiness probe. Keep it cheap so health checks don't do real work.
+${pad}app.get('/health')
+${p2}.describe('Health check endpoint to verify API status')
+${p2}.tag('System')
+${p2}.handler(async (req: any, res: HttpResponse) => {
+${p3}return {
+${indentJoin(healthFields, p3 + '  ')}
+${p3}};
+${p2}});`;
+    };
+
+    // --- / welcome route (top-level routes file) ---
+    const endpointFields = [`health: '/health'`];
+    if (config.features.includes('docs')) endpointFields.push(`docs: '/docs'`);
+    if (config.features.includes('auth')) {
+      endpointFields.push(
+        `login: '/api/auth/login'`,
+        `logout: '/api/auth/logout'`,
+        `profile: '/api/profile'`,
+        `status: '/api/auth/status'`
+      );
+    }
+
+    const renderWelcome = (pad: string): string => {
+      const p2 = pad + '  ';
+      const p3 = pad + '    ';
+      return `${pad}// Basic API info plus a directory of endpoints the app actually serves.
+${pad}app.get('/')
+${p2}.describe('Welcome endpoint with API information')
+${p2}.tag('General')
+${p2}.handler(async (req: any, res: HttpResponse) => {
+${p3}return {
+${p3}  success: true,
+${p3}  message: 'Welcome to your MoroJS ${config.template}!',
+${p3}  endpoints: {
+${indentJoin(endpointFields, p3 + '    ')}
+${p3}  }
+${p3}};
+${p2}});`;
+    };
+
+    let rootContent: string;
+    let healthContent: string;
+
+    if (isNode) {
+      // Node: routes are file-based auto-loaded (config.routing, on by default).
+      // Each file self-registers via getApp() — no wiring in src/index.ts. This
+      // scaffold shows both layouts: a top-level file (this one) and a subfolder
+      // with its own index.ts (./health).
+      rootContent = `// Application Routes — root (top-level route file)
+//
+// Auto-loaded on startup: config.routing scans ./src/routes by default, loading
+// top-level .ts files AND index.ts from subfolders. getApp() returns the app
+// created by createApp(). Drop another file here, or a subfolder like ./health,
+// and it's picked up automatically — no wiring needed in src/index.ts.
+import { getApp } from '@morojs/moro';
+import type { HttpResponse } from '@morojs/moro';
+
+const app = getApp();
+
+${renderWelcome('')}
+`;
+      healthContent = `// Health Routes (subfolder example)
+//
+// Grouping routes in a folder: ./src/routes/health/index.ts is auto-loaded just
+// like a top-level route file. As the API grows, keep a feature's routes (and
+// its schemas/handlers) together under one folder.
+import { getApp } from '@morojs/moro';
+import type { HttpResponse } from '@morojs/moro';
+
+const app = getApp();
+
+${renderHealth('')}
+`;
+    } else {
+      // Serverless runtimes can't scan the filesystem, so routes are registered
+      // explicitly. The root registrar fans out to each subfolder's registrar.
+      healthContent = `// Health Routes (subfolder example)
+//
+// Registered via registerRoutes(app), called from ../index.ts.
+import type { HttpResponse } from '@morojs/moro';
+
+export function registerRoutes(app: any): void {
+${renderHealth('  ')}
 }
+`;
+      rootContent = `// Application Routes — root
+//
+// Registered from src/index.ts via registerRoutes(app). Non-Node runtimes can't
+// scan the filesystem, so add a route subfolder (like ./health) and call its
+// registrar here to wire it up.
+import type { HttpResponse } from '@morojs/moro';
+import { registerRoutes as registerHealthRoutes } from './health/index.js';
 
-export { app };`;
+export function registerRoutes(app: any): void {
+${renderWelcome('  ')}
 
-    await writeFile(join(projectPath, 'src', 'index.ts'), appContent);
+  // Routes grouped in subfolders are registered here.
+  registerHealthRoutes(app);
+}
+`;
+    }
+
+    await writeFile(join(routesDir, 'index.ts'), rootContent);
+    await writeFile(join(routesDir, 'health', 'index.ts'), healthContent);
   }
 
   private getWebSocketConfigString(adapter: string): string {
@@ -1017,13 +1074,21 @@ CLOUDFLARE_API_TOKEN=`
   }
 
   private async generateMoroConfig(projectPath: string, config: any): Promise<void> {
+    // The optional `redis` sub-object is comma-separated from a preceding
+    // database property. It only has a preceding property for these adapters;
+    // for redis/drizzle/sqlite it would be the first key, so no leading comma.
+    const dbHasLeadingProp =
+      config.database === 'postgresql' ||
+      config.database === 'mysql' ||
+      config.database === 'mongodb';
+
     const configContent = `// MoroJS Configuration
 // Generated based on selected features: ${config.features.join(', ')}
 // Reference: https://morojs.com/docs/configuration
 
-import { AppConfig } from '@morojs/moro';
+import type { AppConfig, DeepPartial } from '@morojs/moro';
 
-export default {
+const moroConfig: DeepPartial<AppConfig> = {
   // Server Configuration
   server: {
     port: parseInt(process.env.PORT || process.env.MORO_PORT || '3000'),
@@ -1072,7 +1137,7 @@ ${
       : ''
   }${
     config.database === 'redis' || config.features.includes('cache')
-      ? `,
+      ? `${dbHasLeadingProp ? ',' : ''}
     redis: {
       url: process.env.REDIS_URL || process.env.MORO_REDIS_URL || 'redis://localhost:6379',
       maxRetries: parseInt(process.env.REDIS_MAX_RETRIES || process.env.MORO_REDIS_RETRIES || '3'),
@@ -1087,8 +1152,8 @@ ${
     : ''
 }  // Logging Configuration
   logging: {
-    level: process.env.LOG_LEVEL || process.env.MORO_LOG_LEVEL || 'info',
-    format: process.env.LOG_FORMAT || process.env.MORO_LOG_FORMAT || (process.env.NODE_ENV === 'production' ? 'json' : 'pretty'),
+    level: (process.env.LOG_LEVEL || process.env.MORO_LOG_LEVEL || 'info') as 'debug' | 'info' | 'warn' | 'error' | 'fatal',
+    format: (process.env.LOG_FORMAT || process.env.MORO_LOG_FORMAT || (process.env.NODE_ENV === 'production' ? 'json' : 'pretty')) as 'json' | 'pretty' | 'compact',
     enableColors: process.env.LOG_COLORS !== 'false' && process.env.NO_COLOR !== '1' && process.env.NODE_ENV !== 'production',
     enableTimestamp: process.env.LOG_TIMESTAMP !== 'false',
     enableContext: process.env.LOG_CONTEXT !== 'false'${
@@ -1144,9 +1209,11 @@ ${
       config.features.includes('rate-limit')
         ? `,
     rateLimit: {
-      enabled: process.env.GLOBAL_RATE_LIMIT_ENABLED === 'true',
-      requests: parseInt(process.env.GLOBAL_RATE_LIMIT_REQUESTS || process.env.MORO_GLOBAL_RATE_REQUESTS || '1000'),
-      window: 60000 // 1 minute window
+      global: {
+        enabled: process.env.GLOBAL_RATE_LIMIT_ENABLED === 'true',
+        requests: parseInt(process.env.GLOBAL_RATE_LIMIT_REQUESTS || process.env.MORO_GLOBAL_RATE_REQUESTS || '1000'),
+        window: 60000 // 1 minute window
+      }
     }`
         : ''
     }
@@ -1200,7 +1267,7 @@ ${
       enabled: process.env.CACHE_ENABLED !== 'false' || process.env.MORO_CACHE_ENABLED !== 'false',
       defaultTtl: parseInt(process.env.DEFAULT_CACHE_TTL || process.env.MORO_CACHE_TTL || '300'),
       maxSize: parseInt(process.env.CACHE_MAX_SIZE || process.env.MORO_CACHE_SIZE || '1000'),
-      strategy: process.env.CACHE_STRATEGY || process.env.MORO_CACHE_STRATEGY || 'lru'
+      strategy: (process.env.CACHE_STRATEGY || process.env.MORO_CACHE_STRATEGY || 'lru') as 'lru' | 'lfu' | 'fifo'
     }${config.features.includes('rate-limit') || config.features.includes('validation') ? ',' : ''}`
       : ''
   }${
@@ -1283,7 +1350,9 @@ ${
   }`
         : ''
     }
-} as Partial<AppConfig>;`;
+};
+
+export default moroConfig;`;
 
     await writeFile(join(projectPath, 'moro.config.ts'), configContent);
   }
@@ -1736,6 +1805,7 @@ volumes:
     // Create directory structure
     const directories = [
       'src/modules',
+      'src/routes',
       'src/middleware',
       'src/types',
       'src/utils',
@@ -1757,6 +1827,10 @@ volumes:
     for (const dir of directories) {
       await mkdir(join(projectPath, dir), { recursive: true });
     }
+
+    // Always generate the routes folder with starter health/welcome routes so
+    // every scaffold demonstrates how a route is wired up.
+    await this.generateRoutes(projectPath, config);
 
     // Generate database setup if database is configured
     if (config.database !== 'none') {
@@ -2858,6 +2932,7 @@ Project Structure:
    ${projectName}/
    ├── src/
    │   ├── index.ts          # Main application
+   │   ├── routes/           # Auto-loaded routes (root + health/ subfolder)
    │   ├── modules/          # MoroJS modules
    │   ├── middleware/       # Custom middleware
    ${config.database !== 'none' ? '│   ├── database/         # Database setup' : ''}
