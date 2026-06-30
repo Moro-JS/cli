@@ -18,6 +18,7 @@ import {
   TestOptions as DevTestOptions,
 } from './commands/dev';
 import { MiddlewareManager } from './commands/middleware';
+import { StackCommands } from './commands/stack';
 import { withErrorHandling, assertMutuallyExclusive } from './utils/options';
 import { checkForUpdates } from './utils/update-notifier';
 
@@ -145,6 +146,7 @@ For full examples: https://morojs.com/cli`
       'Validation library (zod|joi|yup|class-validator|multiple)'
     )
     .option('-t, --template <template>', 'Project template (api|fullstack|microservice)')
+    .option('-s, --stack <stack>', 'Scaffold from a pre-wired @morojs/stacks stack (api|saas|edge)')
     .option(
       '-p, --package-manager <pm>',
       'Package manager to use for install scripts (npm|yarn|pnpm) [auto-detected]'
@@ -154,11 +156,120 @@ For full examples: https://morojs.com/cli`
     .option('--dry-run', 'Print what would be created without writing any files')
     .option('--skip-git', 'Skip Git repository initialization')
     .option('--skip-install', 'Skip dependency installation')
+    .option('--link', 'With --stack: link @morojs/stacks from disk (pre-publish testing)')
     .action(
-      withErrorHandling('Init', async (projectName: string, options: ProjectInitOptions) => {
-        const initializer = new ProjectInitializer();
-        await initializer.initializeProject(projectName, options);
+      withErrorHandling(
+        'Init',
+        async (projectName: string, options: ProjectInitOptions & { stack?: string }) => {
+          // `--stack` delegates to the @morojs/stacks scaffolder (the curated,
+          // tested evolution of feature flags). Everything else uses the classic flow.
+          if (options.stack) {
+            await new StackCommands().create(projectName, {
+              stack: options.stack,
+              runtime: options.runtime,
+              database: options.database,
+              packageManager: options.packageManager,
+              force: options.force,
+              link: (options as { link?: boolean }).link,
+            });
+            return;
+          }
+          const initializer = new ProjectInitializer();
+          await initializer.initializeProject(projectName, options);
+        }
+      )
+    );
+
+  // -- Modules (add functional features to a project) --------------------
+  program
+    .command('add <module>')
+    .description('Add a functional module (e.g. auth) to your project')
+    .option('--dir <dir>', 'Project directory [default: current directory]')
+    .option('--force', 'Overwrite an already-added module')
+    .action(
+      withErrorHandling('Add', async (name: string, options: { dir?: string; force?: boolean }) => {
+        await new StackCommands().add(name, options);
       })
+    );
+
+  program
+    .command('modules')
+    .description('List the addable modules')
+    .action(
+      withErrorHandling('Modules', async () => {
+        await new StackCommands().modules();
+      })
+    );
+
+  // -- Stacks (pre-wired application compositions) -----------------------
+  const stackCmd = program
+    .command('stack')
+    .description('Pre-wired application stacks (@morojs/stacks)');
+
+  stackCmd
+    .command('list')
+    .description('List the available stacks')
+    .action(
+      withErrorHandling('Stack', async () => {
+        await new StackCommands().list();
+      })
+    );
+
+  stackCmd
+    .command('describe <name>')
+    .description('Show what a stack composes, its options and peer deps')
+    .action(
+      withErrorHandling('Stack', async (name: string) => {
+        await new StackCommands().describe(name);
+      })
+    );
+
+  stackCmd
+    .command('new <project-name>')
+    .description('Scaffold a new project from a stack')
+    .option(
+      '-s, --stack <stack>',
+      'Stack to use (api|saas|edge). Add features with: morojs add <auth|billing|tenancy|jobs|graphql|realtime>'
+    )
+    .option(
+      '-r, --runtime <type>',
+      'Runtime adapter (node|vercel-edge|aws-lambda|cloudflare-workers)'
+    )
+    .option('-d, --database <type>', 'Database (postgres|mysql|sqlite|mongodb|none)')
+    .option('-p, --package-manager <pm>', 'Package manager (npm|yarn|pnpm)')
+    .option('--force', 'Overwrite a non-empty target directory')
+    .option('--link', 'Link @morojs/stacks from disk instead of npm (pre-publish testing)')
+    .action(
+      withErrorHandling(
+        'Stack',
+        async (
+          projectName: string,
+          options: {
+            stack?: string;
+            runtime?: string;
+            database?: string;
+            packageManager?: string;
+            force?: boolean;
+            link?: boolean;
+          }
+        ) => {
+          await new StackCommands().create(projectName, options);
+        }
+      )
+    );
+
+  stackCmd
+    .command('eject <name>')
+    .description("Expand a stack's preset wiring into your own source")
+    .option('--dir <dir>', 'Project directory [default: current directory]')
+    .option('--force', 'Overwrite existing ejected files')
+    .action(
+      withErrorHandling(
+        'Stack',
+        async (name: string, options: { dir?: string; force?: boolean }) => {
+          await new StackCommands().eject(name, options);
+        }
+      )
     );
 
   // -- Module Generation -------------------------------------------------

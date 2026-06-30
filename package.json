@@ -69,6 +69,14 @@
   "engines": {
     "node": ">=18.0.0"
   },
+  "peerDependencies": {
+    "@morojs/stacks": ">=0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@morojs/stacks": {
+      "optional": true
+    }
+  },
   "overrides": {
     "test-exclude": "^7.0.1",
     "minimatch": ">=10.2.1"
