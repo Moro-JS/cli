@@ -28,10 +28,11 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
 
-      # OIDC trusted publishing (tokenless publish) requires npm >= 11.5.1;
-      # Node 20 ships npm 10.x, so upgrade the CLI before publishing.
+      # OIDC trusted publishing (tokenless publish) needs npm >= 11.5.1. Node 20
+      # ships npm 10.x, and npm@latest is now 12.x (which dropped Node 20 support),
+      # so pin the 11.x line — it supports Node 20.17+ and does trusted publishing.
       - name: Upgrade npm for trusted publishing
-        run: npm install -g npm@latest
+        run: npm install -g npm@11
 
       - name: Install dependencies
         run: npm ci
