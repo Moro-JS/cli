@@ -86,7 +86,7 @@ echo "✅ Deployment complete!"`;
 
 provider:
   name: aws
-  runtime: nodejs18.x
+  runtime: nodejs20.x
   region: ${options.region || 'us-east-1'}
   memorySize: ${options.memory || '512'}
   timeout: ${options.timeout || '30'}

@@ -67,7 +67,7 @@
     "url": "https://github.com/Moro-JS/cli/issues"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "peerDependencies": {
     "@morojs/stacks": ">=0.1.0"

@@ -646,7 +646,7 @@ export class ProjectInitializer {
         }),
       },
       engines: {
-        node: '>=18.0.0',
+        node: '>=20.0.0',
       },
     };
 
@@ -1665,7 +1665,7 @@ This project is licensed under the MIT License.
     const dockerContent = `# MoroJS ${config.template.charAt(0).toUpperCase() + config.template.slice(1)} - Docker Configuration
 
 # Use official Node.js runtime as base image
-FROM node:18-alpine AS base
+FROM node:20-alpine AS base
 
 # Install dependencies only when needed
 FROM base AS deps
