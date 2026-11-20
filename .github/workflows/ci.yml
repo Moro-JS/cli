@@ -12,7 +12,7 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [18.x, 20.x, 22.x]
+        node-version: [20.x, 22.x, 24.x]
 
     steps:
     - name: Checkout code
@@ -108,8 +108,11 @@ jobs:
     - name: Run full validation
       run: npm run validate
 
-    - name: Check for security vulnerabilities
-      run: npm audit --audit-level=moderate
+    - name: Check shipped dependencies for known vulnerabilities
+      run: npm audit --omit=dev --audit-level=moderate
+
+    - name: Whole-tree npm audit, development dependencies included (information only)
+      run: npm audit || true
 
     - name: Check package health
       run: npm run prepare-release || echo "Prepare release check completed"

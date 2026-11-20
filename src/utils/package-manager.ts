@@ -3,7 +3,7 @@
 // --package-manager flag or the user agent that invoked the CLI.
 //
 // Bun is intentionally excluded: @morojs/moro is a Node.js framework
-// (engines.node only, depends on uWebSockets.js) and bun-as-runtime isn't
+// (engines.node only, with a native engine built per Node ABI) and bun-as-runtime isn't
 // supported. Re-add bun here once the framework certifies it.
 
 export const PACKAGE_MANAGERS = ['npm', 'yarn', 'pnpm'] as const;

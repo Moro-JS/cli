@@ -1,5 +1,5 @@
 // Database Management - Setup adapters, run migrations and seeds
-import { writeFile, mkdir, readFile } from 'fs/promises';
+import { writeFile, mkdir, readFile, readdir } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
 import { createFrameworkLogger } from '../logger';
@@ -21,6 +21,22 @@ export interface MigrationOptions {
 
 export interface SeedOptions {
   environment?: string;
+}
+
+// Driver package each framework adapter loads from the project at run time.
+const DRIVER_PACKAGES: Record<string, string> = {
+  postgresql: 'pg',
+  mysql: 'mysql2',
+  sqlite: 'better-sqlite3',
+  mongodb: 'mongodb',
+  redis: 'ioredis',
+  drizzle: 'drizzle-orm pg',
+};
+
+/** The --port value when it is a valid TCP port, otherwise the database's default. */
+function portOrDefault(port: string | undefined, fallback: number): number {
+  const parsed = port === undefined ? NaN : Number(port);
+  return Number.isInteger(parsed) && parsed > 0 && parsed <= 65535 ? parsed : fallback;
 }
 
 export class DatabaseManager {
@@ -48,9 +64,29 @@ export class DatabaseManager {
 
       this.logger.info('✅ Database adapter setup complete!', 'Database');
       this.logger.info('Next steps:', 'Database');
-      this.logger.info('  1. Update your .env file with database credentials', 'Database');
-      this.logger.info('  2. Run migrations: morojs-cli db migrate --up', 'Database');
-      this.logger.info('  3. Seed data: morojs-cli db seed', 'Database');
+      this.logger.info(
+        `  1. Install the driver the adapter loads: npm install ${DRIVER_PACKAGES[type] || ''}`.trimEnd(),
+        'Database'
+      );
+      this.logger.info('  2. Update your .env file with database credentials', 'Database');
+      this.logger.info(
+        '  3. Call setupDatabase(app) from src/database/index.ts when your app starts',
+        'Database'
+      );
+      if (options.withMigrations) {
+        this.logger.info(
+          '  4. Apply migrations from your own code with MigrationRunner ' +
+            '(src/database/migration-runner.ts): new MigrationRunner(adapter).runUp()',
+          'Database'
+        );
+      }
+      if (options.withSeeds) {
+        this.logger.info(
+          `  ${options.withMigrations ? 5 : 4}. Load seed data with SeedRunner ` +
+            '(src/database/seed-runner.ts): new SeedRunner(adapter).run()',
+          'Database'
+        );
+      }
     } catch (error) {
       this.logger.error(
         `Failed to setup database adapter: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -71,26 +107,29 @@ export class DatabaseManager {
       return;
     }
 
-    try {
-      if (options.reset) {
-        this.logger.info('Resetting all migrations...', 'Database');
-        await this.resetMigrations();
-      } else if (options.down) {
-        this.logger.info(' Running migrations down...', 'Database');
-        await this.runMigrationsDown();
-      } else {
-        this.logger.info(' Running migrations up...', 'Database');
-        await this.runMigrationsUp();
-      }
+    const action = options.reset ? 'reset' : options.down ? 'down' : 'up';
+    const files = await this.listSqlFiles(migrationsDir);
 
-      this.logger.info('✅ Migrations completed successfully!', 'Database');
-    } catch (error) {
-      this.logger.error(
-        `Migration failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'Database'
-      );
-      throw error;
-    }
+    // This command does not connect to a database, so it cannot apply anything.
+    // Say so plainly instead of reporting a migration that never happened.
+    this.logger.warn(
+      `No migration was run: "db migrate" (${action}) does not connect to a database or execute SQL.`,
+      'Database'
+    );
+    this.logger.info(
+      `Found ${files.length} migration file(s) in src/database/migrations${
+        files.length ? `: ${files.join(', ')}` : ''
+      }`,
+      'Database'
+    );
+    this.logger.info(
+      existsSync(join(process.cwd(), 'src', 'database', 'migration-runner.ts'))
+        ? 'To apply them, use the MigrationRunner in src/database/migration-runner.ts from your own code: ' +
+            `new MigrationRunner(adapter).${action === 'up' ? 'runUp()' : 'runDown()'} with the adapter returned by setupDatabase(app).`
+        : 'To apply them, generate a runner with "morojs-cli db setup <type> --with-migrations" ' +
+            "(writes src/database/migration-runner.ts) or use your database's own migration tool.",
+      'Database'
+    );
   }
 
   async runSeeds(options: SeedOptions): Promise<void> {
@@ -104,19 +143,36 @@ export class DatabaseManager {
       return;
     }
 
+    const environment = options.environment || 'development';
+    const files = (await this.listSqlFiles(seedsDir)).filter(file => file.includes(environment));
+
+    // Same as migrations: nothing is executed by this command.
+    this.logger.warn(
+      `No seed was run: "db seed" (${environment}) does not connect to a database or execute SQL.`,
+      'Database'
+    );
+    this.logger.info(
+      `Found ${files.length} seed file(s) for "${environment}" in src/database/seeds${
+        files.length ? `: ${files.join(', ')}` : ''
+      }`,
+      'Database'
+    );
+    this.logger.info(
+      existsSync(join(process.cwd(), 'src', 'database', 'seed-runner.ts'))
+        ? 'To load them, use the SeedRunner in src/database/seed-runner.ts from your own code: ' +
+            `new SeedRunner(adapter).run('${environment}') with the adapter returned by setupDatabase(app).`
+        : 'To load them, generate a runner with "morojs-cli db setup <type> --with-seeds" ' +
+            "(writes src/database/seed-runner.ts) or use your database's own tooling.",
+      'Database'
+    );
+  }
+
+  /** Names of the .sql files in a directory, sorted. */
+  private async listSqlFiles(dir: string): Promise<string[]> {
     try {
-      this.logger.info(
-        `Running seeds for ${options.environment || 'development'} environment...`,
-        'Database'
-      );
-      await this.executeSeedFiles(options.environment || 'development');
-      this.logger.info('✅ Database seeded successfully!', 'Database');
-    } catch (error) {
-      this.logger.error(
-        `Seeding failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'Database'
-      );
-      throw error;
+      return (await readdir(dir)).filter(file => file.endsWith('.sql')).sort();
+    } catch {
+      return [];
     }
   }
 
@@ -165,6 +221,7 @@ export class DatabaseManager {
   }
 
   private generatePostgreSQLConfig(options: DatabaseSetupOptions) {
+    const port = portOrDefault(options.port, 5432);
     return {
       setup: `// PostgreSQL Database Setup
 import { PostgreSQLAdapter } from '@morojs/moro';
@@ -175,14 +232,12 @@ const logger = createFrameworkLogger('PostgreSQL');
 export async function setupDatabase(app: any): Promise<PostgreSQLAdapter> {
   const adapter = new PostgreSQLAdapter({
     host: process.env.POSTGRES_HOST || '${options.host || 'localhost'}',
-    port: parseInt(process.env.POSTGRES_PORT || '5432'),
-    username: process.env.POSTGRES_USER || '${options.username || 'postgres'}',
+    port: parseInt(process.env.POSTGRES_PORT || '${port}'),
+    user: process.env.POSTGRES_USER || '${options.username || 'postgres'}',
     password: process.env.POSTGRES_PASSWORD || '',
     database: process.env.POSTGRES_DB || '${options.database || 'myapp'}',
     ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-    connectionLimit: 10,
-    acquireTimeout: 60000,
-    timeout: 60000
+    connectionLimit: 10
   });
 
   try {
@@ -191,14 +246,14 @@ export async function setupDatabase(app: any): Promise<PostgreSQLAdapter> {
     logger.info('✅ PostgreSQL connected successfully', 'Database');
     return adapter;
   } catch (error) {
-    logger.error('❌ PostgreSQL connection failed:', error, 'Database');
+    logger.error('❌ PostgreSQL connection failed: ' + String(error), 'Database');
     throw error;
   }
 }`,
       env: `
 # PostgreSQL Configuration
 POSTGRES_HOST=${options.host || 'localhost'}
-POSTGRES_PORT=5432
+POSTGRES_PORT=${port}
 POSTGRES_USER=${options.username || 'postgres'}
 POSTGRES_PASSWORD=
 POSTGRES_DB=${options.database || 'myapp'}
@@ -207,6 +262,7 @@ DATABASE_URL=postgresql://\${POSTGRES_USER}:\${POSTGRES_PASSWORD}@\${POSTGRES_HO
   }
 
   private generateMySQLConfig(options: DatabaseSetupOptions) {
+    const port = portOrDefault(options.port, 3306);
     return {
       setup: `// MySQL Database Setup
 import { MySQLAdapter } from '@morojs/moro';
@@ -217,14 +273,13 @@ const logger = createFrameworkLogger('MySQL');
 export async function setupDatabase(app: any): Promise<MySQLAdapter> {
   const adapter = new MySQLAdapter({
     host: process.env.MYSQL_HOST || '${options.host || 'localhost'}',
-    port: parseInt(process.env.MYSQL_PORT || '3306'),
-    user: process.env.MYSQL_USER || '${options.username || 'root'}',
+    port: parseInt(process.env.MYSQL_PORT || '${port}'),
+    // MYSQL_USERNAME is the name the framework configuration reads;
+    // MYSQL_USER is accepted for .env files written before it.
+    user: process.env.MYSQL_USERNAME || process.env.MYSQL_USER || '${options.username || 'root'}',
     password: process.env.MYSQL_PASSWORD || '',
     database: process.env.MYSQL_DATABASE || '${options.database || 'myapp'}',
-    connectionLimit: 10,
-    acquireTimeout: 60000,
-    timeout: 60000,
-    reconnect: true
+    connectionLimit: 10
   });
 
   try {
@@ -233,18 +288,18 @@ export async function setupDatabase(app: any): Promise<MySQLAdapter> {
     logger.info('✅ MySQL connected successfully', 'Database');
     return adapter;
   } catch (error) {
-    logger.error('❌ MySQL connection failed:', error, 'Database');
+    logger.error('❌ MySQL connection failed: ' + String(error), 'Database');
     throw error;
   }
 }`,
       env: `
 # MySQL Configuration
 MYSQL_HOST=${options.host || 'localhost'}
-MYSQL_PORT=3306
-MYSQL_USER=${options.username || 'root'}
+MYSQL_PORT=${port}
+MYSQL_USERNAME=${options.username || 'root'}
 MYSQL_PASSWORD=
 MYSQL_DATABASE=${options.database || 'myapp'}
-DATABASE_URL=mysql://\${MYSQL_USER}:\${MYSQL_PASSWORD}@\${MYSQL_HOST}:\${MYSQL_PORT}/\${MYSQL_DATABASE}`,
+DATABASE_URL=mysql://\${MYSQL_USERNAME}:\${MYSQL_PASSWORD}@\${MYSQL_HOST}:\${MYSQL_PORT}/\${MYSQL_DATABASE}`,
     };
   }
 
@@ -268,7 +323,7 @@ export async function setupDatabase(app: any): Promise<SQLiteAdapter> {
     logger.info('✅ SQLite connected successfully', 'Database');
     return adapter;
   } catch (error) {
-    logger.error('❌ SQLite connection failed:', error, 'Database');
+    logger.error('❌ SQLite connection failed: ' + String(error), 'Database');
     throw error;
   }
 }`,
@@ -280,6 +335,7 @@ DATABASE_URL=sqlite://\${SQLITE_DATABASE}`,
   }
 
   private generateMongoDBConfig(options: DatabaseSetupOptions) {
+    const port = portOrDefault(options.port, 27017);
     return {
       setup: `// MongoDB Database Setup
 import { MongoDBAdapter } from '@morojs/moro';
@@ -289,12 +345,8 @@ const logger = createFrameworkLogger('MongoDB');
 
 export async function setupDatabase(app: any): Promise<MongoDBAdapter> {
   const adapter = new MongoDBAdapter({
-    url: process.env.MONGODB_URI || 'mongodb://${options.host || 'localhost'}:27017/${options.database || 'myapp'}',
-    options: {
-      maxPoolSize: 10,
-      serverSelectionTimeoutMS: 5000,
-      socketTimeoutMS: 45000
-    }
+    url: process.env.MONGODB_URI || 'mongodb://${options.host || 'localhost'}:${port}/${options.database || 'myapp'}',
+    maxPoolSize: 10
   });
 
   try {
@@ -303,18 +355,19 @@ export async function setupDatabase(app: any): Promise<MongoDBAdapter> {
     logger.info('✅ MongoDB connected successfully', 'Database');
     return adapter;
   } catch (error) {
-    logger.error('❌ MongoDB connection failed:', error, 'Database');
+    logger.error('❌ MongoDB connection failed: ' + String(error), 'Database');
     throw error;
   }
 }`,
       env: `
 # MongoDB Configuration
-MONGODB_URI=mongodb://${options.host || 'localhost'}:27017/${options.database || 'myapp'}
+MONGODB_URI=mongodb://${options.host || 'localhost'}:${port}/${options.database || 'myapp'}
 DATABASE_URL=\${MONGODB_URI}`,
     };
   }
 
   private generateRedisConfig(options: DatabaseSetupOptions) {
+    const port = portOrDefault(options.port, 6379);
     return {
       setup: `// Redis Database Setup
 import { RedisAdapter } from '@morojs/moro';
@@ -325,7 +378,7 @@ const logger = createFrameworkLogger('Redis');
 export async function setupDatabase(app: any): Promise<RedisAdapter> {
   const adapter = new RedisAdapter({
     host: process.env.REDIS_HOST || '${options.host || 'localhost'}',
-    port: parseInt(process.env.REDIS_PORT || '6379'),
+    port: parseInt(process.env.REDIS_PORT || '${port}'),
     password: process.env.REDIS_PASSWORD,
     db: parseInt(process.env.REDIS_DB || '0'),
     keyPrefix: process.env.REDIS_KEY_PREFIX || 'moro:',
@@ -339,14 +392,14 @@ export async function setupDatabase(app: any): Promise<RedisAdapter> {
     logger.info('✅ Redis connected successfully', 'Database');
     return adapter;
   } catch (error) {
-    logger.error('❌ Redis connection failed:', error, 'Database');
+    logger.error('❌ Redis connection failed: ' + String(error), 'Database');
     throw error;
   }
 }`,
       env: `
 # Redis Configuration
 REDIS_HOST=${options.host || 'localhost'}
-REDIS_PORT=6379
+REDIS_PORT=${port}
 REDIS_PASSWORD=
 REDIS_DB=0
 REDIS_KEY_PREFIX=moro:
@@ -361,12 +414,12 @@ DATABASE_URL=\${REDIS_URL}`,
 import { DrizzleAdapter } from '@morojs/moro';
 import { createFrameworkLogger } from '@morojs/moro';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Client } from 'pg';
+import pg from 'pg';
 
 const logger = createFrameworkLogger('Drizzle');
 
 export async function setupDatabase(app: any): Promise<DrizzleAdapter> {
-  const client = new Client({
+  const client = new pg.Client({
     connectionString: process.env.DATABASE_URL,
     ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
   });
@@ -375,8 +428,7 @@ export async function setupDatabase(app: any): Promise<DrizzleAdapter> {
   const db = drizzle(client);
 
   const adapter = new DrizzleAdapter({
-    db,
-    client
+    database: db
   });
 
   try {
@@ -384,7 +436,7 @@ export async function setupDatabase(app: any): Promise<DrizzleAdapter> {
     logger.info('✅ Drizzle ORM connected successfully', 'Database');
     return adapter;
   } catch (error) {
-    logger.error('❌ Drizzle ORM connection failed:', error, 'Database');
+    logger.error('❌ Drizzle ORM connection failed: ' + String(error), 'Database');
     throw error;
   }
 }`,
@@ -422,7 +474,7 @@ export class MigrationRunner {
 
   async runUp(): Promise<void> {
     const migrations = await this.getMigrations();
-    
+
     for (const migration of migrations) {
       logger.info(\`Running migration: \${migration.name}\`, 'Migration');
       await this.executeMigration(migration.up);
@@ -432,7 +484,7 @@ export class MigrationRunner {
 
   async runDown(): Promise<void> {
     const migrations = await this.getMigrations();
-    
+
     for (const migration of migrations.reverse()) {
       logger.info(\`Reversing migration: \${migration.name}\`, 'Migration');
       await this.executeMigration(migration.down);
@@ -443,20 +495,22 @@ export class MigrationRunner {
   private async getMigrations() {
     const migrationsDir = join(process.cwd(), 'src', 'database', 'migrations');
     const files = await readdir(migrationsDir);
-    
-    return files
-      .filter(file => file.endsWith('.sql'))
-      .sort()
-      .map(async file => {
-        const content = await readFile(join(migrationsDir, file), 'utf-8');
-        const [up, down] = content.split('-- DOWN');
-        
-        return {
-          name: file,
-          up: up.replace('-- UP', '').trim(),
-          down: down ? down.trim() : ''
-        };
-      });
+
+    return Promise.all(
+      files
+        .filter(file => file.endsWith('.sql'))
+        .sort()
+        .map(async file => {
+          const content = await readFile(join(migrationsDir, file), 'utf-8');
+          const [up, down] = content.split('-- DOWN');
+
+          return {
+            name: file,
+            up: (up ?? '').replace('-- UP', '').trim(),
+            down: down ? down.trim() : ''
+          };
+        })
+    );
   }
 
   private async executeMigration(sql: string): Promise<void> {
@@ -505,7 +559,7 @@ export class SeedRunner {
 
   async run(environment: string = 'development'): Promise<void> {
     const seeds = await this.getSeeds(environment);
-    
+
     for (const seed of seeds) {
       logger.info(\`Running seed: \${seed.name}\`, 'Seed');
       await this.executeSeed(seed.sql);
@@ -516,17 +570,19 @@ export class SeedRunner {
   private async getSeeds(environment: string) {
     const seedsDir = join(process.cwd(), 'src', 'database', 'seeds');
     const files = await readdir(seedsDir);
-    
-    return files
-      .filter(file => file.endsWith('.sql') && file.includes(environment))
-      .sort()
-      .map(async file => {
-        const content = await readFile(join(seedsDir, file), 'utf-8');
-        return {
-          name: file,
-          sql: content
-        };
-      });
+
+    return Promise.all(
+      files
+        .filter(file => file.endsWith('.sql') && file.includes(environment))
+        .sort()
+        .map(async file => {
+          const content = await readFile(join(seedsDir, file), 'utf-8');
+          return {
+            name: file,
+            sql: content
+          };
+        })
+    );
   }
 
   private async executeSeed(sql: string): Promise<void> {
@@ -574,39 +630,5 @@ INSERT INTO users (name, email, password_hash) VALUES
       // If we can't update, just log a warning
       this.logger.warn('Could not update .env.example file', 'Database');
     }
-  }
-
-  private async runMigrationsUp(): Promise<void> {
-    // Implementation would depend on the database type
-    // For now, just log the action
-    this.logger.info('Migration system would run here', 'Database');
-    this.logger.info('Implement actual migration logic based on your database adapter', 'Database');
-  }
-
-  private async runMigrationsDown(): Promise<void> {
-    // Implementation would depend on the database type
-    this.logger.info('Migration rollback system would run here', 'Database');
-    this.logger.info(
-      'Implement actual migration rollback logic based on your database adapter',
-      'Database'
-    );
-  }
-
-  private async resetMigrations(): Promise<void> {
-    // Implementation would depend on the database type
-    this.logger.info('Migration reset system would run here', 'Database');
-    this.logger.info(
-      'Implement actual migration reset logic based on your database adapter',
-      'Database'
-    );
-  }
-
-  private async executeSeedFiles(environment: string): Promise<void> {
-    // Implementation would depend on the database type
-    this.logger.info(`Seed execution system would run here for ${environment}`, 'Database');
-    this.logger.info(
-      'Implement actual seed execution logic based on your database adapter',
-      'Database'
-    );
   }
 }

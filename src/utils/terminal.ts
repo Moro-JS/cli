@@ -1,6 +1,10 @@
 // Terminal Command Utilities
 import { spawn, exec } from 'child_process';
 import { promisify } from 'util';
+import { createFrameworkLogger } from '../logger';
+
+// Commands are logged at debug level, so they show up under --verbose.
+const logger = createFrameworkLogger('Terminal');
 
 const execAsync = promisify(exec);
 
@@ -15,6 +19,8 @@ export async function runTerminalCmd(
   options: TerminalOptions = {}
 ): Promise<{ stdout: string; stderr: string }> {
   const { cwd = process.cwd(), env = process.env, stdio = 'pipe' } = options;
+
+  logger.debug(`$ ${command}  (cwd: ${cwd})`, 'Terminal');
 
   try {
     const { stdout, stderr } = await execAsync(command, {
@@ -35,6 +41,8 @@ export function spawnCommand(
 ): Promise<number> {
   return new Promise((resolve, reject) => {
     const { cwd = process.cwd(), env = process.env, stdio = 'inherit' } = options;
+
+    logger.debug(`$ ${[command, ...args].join(' ')}  (cwd: ${cwd})`, 'Terminal');
 
     const child = spawn(command, args, {
       cwd,

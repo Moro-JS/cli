@@ -4,7 +4,7 @@
 import { Command } from 'commander';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { createFrameworkLogger } from './logger';
+import { createFrameworkLogger, setCliLogLevel } from './logger';
 import { ModuleStubGenerator } from './module-stub-generator';
 import { ProjectInitializer, ProjectInitOptions } from './commands/init';
 import { ConfigManager, ConfigOptions } from './commands/config';
@@ -120,8 +120,16 @@ For full examples: https://morojs.com/cli`
     .hook('preAction', (thisCommand: Command) => {
       const opts = thisCommand.opts<GlobalOptions>();
       assertMutuallyExclusive(opts as Record<string, unknown>, ['verbose', 'quiet']);
-      if (opts.verbose) process.env.LOG_LEVEL = 'debug';
-      if (opts.quiet) process.env.LOG_LEVEL = 'error';
+      // LOG_LEVEL is inherited by the processes a command starts; the CLI's own
+      // loggers, banners and spinners follow setCliLogLevel().
+      if (opts.verbose) {
+        process.env.LOG_LEVEL = 'debug';
+        setCliLogLevel('debug');
+      }
+      if (opts.quiet) {
+        process.env.LOG_LEVEL = 'error';
+        setCliLogLevel('error');
+      }
     });
 
   // -- Project Initialization --------------------------------------------
@@ -473,11 +481,19 @@ For full examples: https://morojs.com/cli`
     .description('Development server with hot reload')
     .option('-p, --port <port>', 'Port number', '3000')
     .option('-h, --host <host>', 'Host address', 'localhost')
-    .option('--watch <paths>', 'Additional paths to watch')
+    .option('--watch <paths>', 'Paths to watch instead of src (comma-separated)')
     .action(
-      withErrorHandling('Dev', async (options: DevOptions) => {
+      withErrorHandling('Dev', async (options: DevOptions, command: Command) => {
         const devTools = new DevTools();
-        await devTools.startDevServer(options);
+        // --port and --host have defaults so that help shows them; only values
+        // given on the command line are passed on, so a default never overrides
+        // the PORT / HOST of the project's own .env.
+        const given = (name: string) => command.getOptionValueSource(name) === 'cli';
+        await devTools.startDevServer({
+          ...options,
+          port: given('port') ? options.port : undefined,
+          host: given('host') ? options.host : undefined,
+        });
       })
     );
 
@@ -488,9 +504,15 @@ For full examples: https://morojs.com/cli`
     .option('-o, --output <dir>', 'Output directory', 'dist')
     .option('--minify', 'Minify output')
     .action(
-      withErrorHandling('Build', async (options: BuildOptions) => {
+      withErrorHandling('Build', async (options: BuildOptions, command: Command) => {
         const devTools = new DevTools();
-        await devTools.buildProject(options);
+        // --output has a default so that help shows it; only an explicit value
+        // overrides the outDir of the project's own tsconfig.
+        const outputGiven = command.getOptionValueSource('output') === 'cli';
+        await devTools.buildProject({
+          ...options,
+          output: outputGiven ? options.output : undefined,
+        });
       })
     );
 
@@ -545,7 +567,8 @@ Project Initialization
   Interactive mode (no flags) — guided prompts step-by-step:
     npx @morojs/cli init my-api
 
-  Non-interactive mode — pass ANY flag (or --fast) and the CLI fills in the
+  Non-interactive mode — pass --fast, or any of --runtime, --database,
+  --features, --websocket, --validation, --template, and the CLI fills in the
   rest with sensible defaults (runtime=node, database=none, template=api,
   validation=zod):
     npx @morojs/cli init my-api --fast
@@ -562,8 +585,8 @@ Project Initialization
 
 Module Creation
 ---------------
-  npx @morojs/cli module create users --features=database,auth,cache --with-tests
-  npx @morojs/cli module create orders --database=mongodb --middleware=auth,rate-limit
+  npx @morojs/cli module create users
+  npx @morojs/cli module create orders --features=websocket,database
 
 Configuration
 -------------
@@ -591,7 +614,7 @@ Deployment
 
 Middleware
 ----------
-  npx @morojs/cli middleware add auth --config='{"roles":["admin","user"]}'
+  npx @morojs/cli middleware add auth --config='{"expiresIn":"7d"}'
   npx @morojs/cli middleware list
 
 For complete docs: https://morojs.com/cli

@@ -46,6 +46,21 @@ describe('buildEquivalentCommand', () => {
     expect(cmd).toContain('--package-manager=pnpm');
   });
 
+  test('adds --fast when --package-manager is the only flag, since that flag alone still prompts', () => {
+    const cmd = buildEquivalentCommand('my-api', { ...baseConfig, packageManager: 'pnpm' });
+    expect(cmd).toBe('npx @morojs/cli init my-api --fast --package-manager=pnpm');
+
+    // A stack flag already makes the command non-interactive: no --fast then.
+    const withStackFlag = buildEquivalentCommand('my-api', {
+      ...baseConfig,
+      database: 'mysql',
+      packageManager: 'yarn',
+    });
+    expect(withStackFlag).toBe(
+      'npx @morojs/cli init my-api --database=mysql --package-manager=yarn'
+    );
+  });
+
   test('combines runtime override with feature list', () => {
     const cmd = buildEquivalentCommand('my-api', {
       ...baseConfig,

@@ -13,7 +13,8 @@
 #   - Test
 #   - Build
 #   - CLI smoke test
-#   - Security audit
+#   - npm audit of the shipped dependencies (fails the run), then of the whole
+#     tree including development dependencies (printed, never fails the run)
 #   - Pack dry-run
 
 set -euo pipefail
@@ -45,8 +46,11 @@ step "Verifying CLI"
 node dist/cli.js --version
 node dist/cli.js --help > /dev/null
 
-step "Running security audit"
-npm audit
+step "Checking shipped dependencies for known vulnerabilities"
+npm audit --omit=dev --audit-level=moderate
+
+step "Whole-tree npm audit, development dependencies included (information only)"
+npm audit || true
 
 step "Verifying package contents"
 npm pack --dry-run

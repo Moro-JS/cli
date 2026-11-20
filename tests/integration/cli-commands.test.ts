@@ -71,7 +71,7 @@ describe('CLI Commands Integration', () => {
       expect(packageJson.name).toBe(projectName);
       expect(packageJson.dependencies.zod).toBeDefined();
       expect(packageJson.dependencies.pg).toBeDefined(); // postgresql
-      expect(packageJson.dependencies.bcryptjs).toBeDefined(); // auth
+      expect(packageJson.dependencies['better-auth']).toBeDefined(); // auth
     });
 
     test('should create project with WebSocket features', async () => {
@@ -119,6 +119,52 @@ describe('CLI Commands Integration', () => {
       expect(stdout).toContain('Configuration management');
       expect(stdout).toContain('init');
       expect(stdout).toContain('validate');
+    });
+  });
+
+  describe('Global --quiet / --verbose', () => {
+    test('--quiet suppresses informational output', async () => {
+      const normal = await execAsync(`cd "${testDir}" && node "${cliPath}" module list`);
+      expect(normal.stdout).toContain('No modules directory found');
+
+      const quiet = await execAsync(`cd "${testDir}" && node "${cliPath}" --quiet module list`);
+      expect(quiet.stdout.trim()).toBe('');
+    });
+
+    test('--quiet init writes the project without the banner or success box', async () => {
+      const { stdout } = await execAsync(
+        `cd "${testDir}" && node "${cliPath}" --quiet init quiet-app --fast --skip-git --skip-install`,
+        { timeout: 30000 }
+      );
+
+      expect(stdout.trim()).toBe('');
+      expect(await fileExists(join(testDir, 'quiet-app', 'package.json'))).toBe(true);
+    });
+
+    test('--verbose adds debug output', async () => {
+      const normal = await execAsync(
+        `cd "${testDir}" && node "${cliPath}" init plain-app --fast --skip-git --skip-install`,
+        { timeout: 30000 }
+      );
+      expect(normal.stdout).not.toContain('debug');
+
+      const verbose = await execAsync(
+        `cd "${testDir}" && node "${cliPath}" --verbose init verbose-app --fast --skip-git --skip-install`,
+        { timeout: 30000 }
+      );
+      expect(verbose.stdout).toContain('debug');
+      expect(verbose.stdout).toContain('Wrote verbose-app/package.json');
+    });
+  });
+
+  describe('Database Command', () => {
+    test('db migrate exits 0 and says that no migration was run', async () => {
+      await fs.mkdir(join(testDir, 'src', 'database', 'migrations'), { recursive: true });
+
+      const { stdout } = await execAsync(`cd "${testDir}" && node "${cliPath}" db migrate --up`);
+
+      expect(stdout).toContain('No migration was run');
+      expect(stdout).not.toContain('completed successfully');
     });
   });
 

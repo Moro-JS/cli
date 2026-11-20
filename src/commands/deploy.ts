@@ -1,7 +1,18 @@
 // Deployment Management - Setup runtime-specific deployments
-import { writeFile } from 'fs/promises';
+import { writeFile, chmod } from 'fs/promises';
 import { join } from 'path';
 import { createFrameworkLogger } from '../logger';
+
+/**
+ * Writes a deployment script and marks it executable, so the printed
+ * "./deploy-*.sh" step works as shown.
+ */
+async function writeExecutableScript(path: string, content: string): Promise<void> {
+  await writeFile(path, content, { mode: 0o755 });
+  // The mode option only applies when the file is created; an existing script
+  // keeps its old mode, so set it explicitly.
+  await chmod(path, 0o755);
+}
 
 export interface VercelOptions {
   domain?: string;
@@ -61,7 +72,7 @@ vercel --prod ${options.domain ? `--alias ${options.domain}` : ''}
 
 echo "✅ Deployment complete!"`;
 
-      await writeFile(join(process.cwd(), 'deploy-vercel.sh'), deployScript);
+      await writeExecutableScript(join(process.cwd(), 'deploy-vercel.sh'), deployScript);
 
       this.logger.info('✅ Vercel deployment configuration created!', 'Deploy');
       this.logger.info('Next steps:', 'Deploy');
@@ -95,7 +106,9 @@ provider:
 
 functions:
   api:
-    handler: dist/index.handler
+    # dist/runtime.js is written by "morojs-cli build --target lambda" (see
+    # deploy-lambda.sh) and exports the Lambda handler of the compiled app.
+    handler: dist/runtime.handler
     events:
       - http:
           path: /{proxy+}
@@ -125,15 +138,16 @@ package:
 
 echo "Deploying to AWS Lambda..."
 
-# Build the project
-npm run build
+# Compile the project and write dist/runtime.js, the Lambda entry that
+# serverless.yml points at (handler: dist/runtime.handler)
+npx @morojs/cli build --target=lambda
 
 # Deploy with Serverless Framework
 serverless deploy --region ${options.region || 'us-east-1'}
 
 echo "✅ Deployment complete!"`;
 
-      await writeFile(join(process.cwd(), 'deploy-lambda.sh'), deployScript);
+      await writeExecutableScript(join(process.cwd(), 'deploy-lambda.sh'), deployScript);
 
       this.logger.info('✅ AWS Lambda deployment configuration created!', 'Deploy');
       this.logger.info('Next steps:', 'Deploy');
@@ -155,7 +169,9 @@ echo "✅ Deployment complete!"`;
     try {
       // Generate wrangler.toml
       const wranglerConfig = `name = "${options.name || 'morojs-worker'}"
-main = "dist/index.js"
+# dist/runtime.js is written by "morojs-cli build --target workers" (see
+# deploy-workers.sh) and exports the Worker's fetch handler.
+main = "dist/runtime.js"
 compatibility_date = "2023-12-01"
 
 [env.production]
@@ -172,15 +188,16 @@ name = "${options.name || 'morojs-worker'}-staging"`;
 
 echo "Deploying to Cloudflare Workers..."
 
-# Build the project
-npm run build
+# Compile the project and write dist/runtime.js, the Worker entry that
+# wrangler.toml points at (main)
+npx @morojs/cli build --target=workers
 
-# Deploy with Wrangler
-wrangler publish
+# Deploy with Wrangler ("wrangler publish" was renamed to "wrangler deploy" in v3)
+wrangler deploy
 
 echo "✅ Deployment complete!"`;
 
-      await writeFile(join(process.cwd(), 'deploy-workers.sh'), deployScript);
+      await writeExecutableScript(join(process.cwd(), 'deploy-workers.sh'), deployScript);
 
       this.logger.info('✅ Cloudflare Workers deployment configuration created!', 'Deploy');
       this.logger.info('Next steps:', 'Deploy');

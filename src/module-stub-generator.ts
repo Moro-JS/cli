@@ -1,7 +1,7 @@
 // Module Stub Generator for MoroJS
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { createFrameworkLogger } from './logger';
 
 export class ModuleStubGenerator {
@@ -14,7 +14,10 @@ export class ModuleStubGenerator {
 
     this.logger.info(`Generating advanced module: ${name}`, 'ModuleGenerator');
     this.logger.info(`Features: ${features.join(', ') || 'basic'}`, 'ModuleGenerator');
-    this.logger.info(`Middleware: ${middleware.join(', ') || 'none'}`, 'ModuleGenerator');
+
+    for (const notice of this.unappliedOptionNotices(features, options)) {
+      this.logger.warn(notice, 'ModuleGenerator');
+    }
 
     await this.generateModule(name, features, {
       middleware,
@@ -25,6 +28,40 @@ export class ModuleStubGenerator {
       template: options.template,
       routes: options.routes,
     });
+  }
+
+  /**
+   * One line per option that was passed but does not change the generated
+   * files, so the output never implies that it did.
+   */
+  private unappliedOptionNotices(features: string[], options: any): string[] {
+    const notices: string[] = [];
+    const notApplied = (flag: string) =>
+      `${flag} is accepted but not applied: it does not change the generated files.`;
+
+    const inertFeatures = features.filter(
+      (feature: string) => !['websocket', 'database', 'validation'].includes(feature)
+    );
+    if (inertFeatures.length > 0) {
+      notices.push(
+        `--features: only "websocket" and "database" add files (validation schemas are always generated). ` +
+          `Not applied: ${inertFeatures.join(', ')}.`
+      );
+    }
+    if (options.database) notices.push(notApplied(`--database=${options.database}`));
+    if (options.middleware) notices.push(notApplied(`--middleware=${options.middleware}`));
+    if (options.routes && options.routes !== 'crud') {
+      notices.push(notApplied(`--routes=${options.routes}`) + ' CRUD routes were generated.');
+    }
+    if (options.template && options.template !== 'service') {
+      notices.push(notApplied(`--template=${options.template}`));
+    }
+    if (options.authRoles) notices.push(notApplied(`--auth-roles=${options.authRoles}`));
+    if (options.withTests)
+      notices.push(notApplied('--with-tests') + ' No test files were written.');
+    if (options.withDocs)
+      notices.push(notApplied('--with-docs') + ' No documentation was written.');
+    return notices;
   }
 
   async listModules(): Promise<void> {
@@ -93,14 +130,36 @@ export class ModuleStubGenerator {
     this.logger.info(`Generated functional module: ${name}`, 'Generation');
     this.logger.info(`Features: ${features.join(', ') || 'basic'}`, 'Instructions');
     this.logger.info(`To get started:`, 'Instructions');
-    this.logger.info(`  cd ${name}`, 'Instructions');
+    this.logger.info(`  cd src/modules/${name}`, 'Instructions');
     this.logger.info(`  # Add your business logic to actions.ts`, 'Instructions');
     this.logger.info(`  # Configure routes in routes.ts`, 'Instructions');
     this.logger.info(`  # Update validation schemas in schemas.ts`, 'Instructions');
     this.logger.info(
-      `  # Test with: curl http://localhost:3000/api/v1.0.0/${name}/${name}s`,
+      `  # Test with: curl http://localhost:3000/api/v1.0.0/${name}/`,
       'Instructions'
     );
+
+    if (!this.projectHasDependency('zod')) {
+      this.logger.warn(
+        'schemas.ts imports "zod", which is not in this project\'s package.json. Add it with: npm install zod',
+        'Instructions'
+      );
+    }
+  }
+
+  /** True when package.json in the current directory lists the dependency (or cannot be read). */
+  private projectHasDependency(dependency: string): boolean {
+    try {
+      const pkg = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'));
+      return Boolean(
+        pkg.dependencies?.[dependency] ||
+        pkg.devDependencies?.[dependency] ||
+        pkg.peerDependencies?.[dependency]
+      );
+    } catch {
+      // Not run from a project root: nothing reliable to say.
+      return true;
+    }
   }
 
   private writeTypes(modulePath: string, name: string) {
@@ -182,9 +241,10 @@ export type ${className}Query = z.infer<typeof ${className}QuerySchema>;`;
   }
 
   private writeConfig(modulePath: string, name: string) {
+    const plural = this.pluralize(name);
     const content = `// ${this.capitalize(name)} Module Configuration
 export const config = {
-  prefix: '/${name}s',
+  prefix: '/${plural}',
   version: '1.0.0',
   description: '${this.capitalize(name)} management module',
   tags: ['${name}', 'api']
@@ -195,26 +255,39 @@ export const config = {
 
   private writeActions(modulePath: string, name: string, hasDatabase: boolean) {
     const className = this.capitalize(name);
+    const plural = this.pluralize(name);
+    const classPlural = this.capitalize(plural);
     const content = `// ${className} Actions - Pure Business Logic
-import { ${className}, Create${className}Request, Update${className}Request } from './types';
+import type { ${className}, Create${className}Request, Update${className}Request } from './types.js';
+
+// In-memory store used until a real database is wired in, so the routes work
+// as soon as the module is generated. The framework does not set req.database:
+// when a handler passes an object with a "${plural}" array it is used, otherwise
+// the records live here and are lost on restart. Replace collection() with
+// queries against your own database.
+const memoryStore: ${className}[] = [];
+
+function collection(database: any): ${className}[] {
+  return database && Array.isArray(database.${plural}) ? database.${plural} : memoryStore;
+}
 
 // Pure business logic functions that receive dependencies as parameters
-export async function getAll${className}s(database: any): Promise<${className}[]> {
-  return database.${name}s || [];
+export async function getAll${classPlural}(database: any): Promise<${className}[]> {
+  return collection(database);
 }
 
 export async function get${className}ById(id: number, database: any): Promise<${className} | null> {
-  const items = database.${name}s || [];
+  const items = collection(database);
   return items.find((item: ${className}) => item.id === id) || null;
 }
 
 export async function create${className}(data: Create${className}Request, database: any, events: any): Promise<${className}> {
-  const items = database.${name}s || [];
+  const items = collection(database);
   const newItem: ${className} = {
     id: Math.max(...items.map((item: ${className}) => item.id), 0) + 1,
     name: data.name,
     description: data.description,
-    active: data.active || true,
+    active: data.active ?? true,
     createdAt: new Date(),
     updatedAt: new Date()
   };
@@ -228,7 +301,7 @@ export async function create${className}(data: Create${className}Request, databa
 }
 
 export async function update${className}(id: number, data: Update${className}Request, database: any, events: any): Promise<${className} | null> {
-  const items = database.${name}s || [];
+  const items = collection(database);
   const itemIndex = items.findIndex((item: ${className}) => item.id === id);
 
   if (itemIndex === -1) {
@@ -254,7 +327,7 @@ export async function update${className}(id: number, data: Update${className}Req
 }
 
 export async function delete${className}(id: number, database: any, events: any): Promise<boolean> {
-  const items = database.${name}s || [];
+  const items = collection(database);
   const itemIndex = items.findIndex((item: ${className}) => item.id === id);
 
   if (itemIndex === -1) {
@@ -275,20 +348,22 @@ export async function delete${className}(id: number, database: any, events: any)
 
   private writeRoutes(modulePath: string, name: string) {
     const className = this.capitalize(name);
+    const plural = this.pluralize(name);
+    const classPlural = this.capitalize(plural);
     const content = `// ${className} Routes - HTTP Handlers with Intelligent Routing
 import {
-  getAll${className}s,
+  getAll${classPlural},
   get${className}ById,
   create${className},
   update${className},
   delete${className}
-} from './actions';
+} from './actions.js';
 import {
   ${className}QuerySchema,
   ${className}ParamsSchema,
   Create${className}Schema,
   Update${className}Schema
-} from './schemas';
+} from './schemas.js';
 
 export const routes = [
   {
@@ -299,10 +374,10 @@ export const routes = [
     },
     cache: { ttl: 60 },
     rateLimit: { requests: 100, window: 60000 },
-    description: 'Get all ${name}s with pagination and filtering',
+    description: 'Get all ${plural} with pagination and filtering',
     tags: ['${name}', 'list'],
     handler: async (req: any, res: any) => {
-      const items = await getAll${className}s(req.database);
+      const items = await getAll${classPlural}(req.database);
 
       // Apply query filtering
       let filteredItems = items;
@@ -440,6 +515,7 @@ export const ${name}Sockets = [
 
   private async writeDatabase(modulePath: string, name: string) {
     const className = this.capitalize(name);
+    const plural = this.pluralize(name);
 
     // Create database directory structure
     await mkdir(join(modulePath, 'database'), { recursive: true });
@@ -448,7 +524,7 @@ export const ${name}Sockets = [
 
     // Schema
     const schemaContent = `-- ${className} Module Database Schema
-CREATE TABLE IF NOT EXISTS ${name}s (
+CREATE TABLE IF NOT EXISTS ${plural} (
   id SERIAL PRIMARY KEY,
   name VARCHAR(255) NOT NULL,
   description TEXT,
@@ -458,14 +534,14 @@ CREATE TABLE IF NOT EXISTS ${name}s (
 );
 
 -- Indexes for common queries
-CREATE INDEX IF NOT EXISTS idx_${name}s_name ON ${name}s(name);
-CREATE INDEX IF NOT EXISTS idx_${name}s_created_at ON ${name}s(created_at);`;
+CREATE INDEX IF NOT EXISTS idx_${plural}_name ON ${plural}(name);
+CREATE INDEX IF NOT EXISTS idx_${plural}_created_at ON ${plural}(created_at);`;
 
     await writeFile(join(modulePath, 'database', 'schema.sql'), schemaContent);
 
     // Migration
-    const migrationContent = `-- Migration 001: Create ${name}s table
-CREATE TABLE ${name}s (
+    const migrationContent = `-- Migration 001: Create ${plural} table
+CREATE TABLE ${plural} (
   id SERIAL PRIMARY KEY,
   name VARCHAR(255) NOT NULL,
   description TEXT,
@@ -475,22 +551,22 @@ CREATE TABLE ${name}s (
 );
 
 -- Indexes for performance
-CREATE INDEX idx_${name}s_name ON ${name}s(name);
-CREATE INDEX idx_${name}s_created_at ON ${name}s(created_at);`;
+CREATE INDEX idx_${plural}_name ON ${plural}(name);
+CREATE INDEX idx_${plural}_created_at ON ${plural}(created_at);`;
 
     await writeFile(
-      join(modulePath, 'database', 'migrations', '001_create_' + name + 's.sql'),
+      join(modulePath, 'database', 'migrations', '001_create_' + plural + '.sql'),
       migrationContent
     );
 
     // Seeds
     const seedContent = `-- Sample ${className} Data
-INSERT INTO ${name}s (name, description) VALUES
+INSERT INTO ${plural} (name, description) VALUES
 ('Sample ${className} 1', 'This is a sample ${name} item'),
 ('Sample ${className} 2', 'Another sample ${name} item');`;
 
     return writeFile(
-      join(modulePath, 'database', 'seeds', 'sample_' + name + 's.sql'),
+      join(modulePath, 'database', 'seeds', 'sample_' + plural + '.sql'),
       seedContent
     );
   }
@@ -498,11 +574,11 @@ INSERT INTO ${name}s (name, description) VALUES
   private writeIndex(modulePath: string, name: string, hasWebSocket: boolean) {
     const className = this.capitalize(name);
     const content = `// ${className} Module - Functional Structure
-import { config } from './config';
-import { routes } from './routes';${
+import { config } from './config.js';
+import { routes } from './routes.js';${
       hasWebSocket
         ? `
-import { ${name}Sockets as sockets } from './sockets';`
+import { ${name}Sockets as sockets } from './sockets.js';`
         : ''
     }
 import { defineModule } from '@morojs/moro';
@@ -520,10 +596,19 @@ export default defineModule({
 });
 
 // Re-export types and actions for direct usage
-export * from './types';
-export * from './actions';`;
+export * from './types.js';
+export * from './actions.js';`;
 
     return writeFile(join(modulePath, 'index.ts'), content);
+  }
+
+  /**
+   * Plural form used for the route prefix, table and collection names. A name
+   * that is already plural ("users") is kept as it is instead of gaining a
+   * second "s".
+   */
+  private pluralize(name: string): string {
+    return /s$/i.test(name) ? name : `${name}s`;
   }
 
   private capitalize(str: string): string {

@@ -2,7 +2,8 @@
 import { writeFile, mkdir } from 'fs/promises';
 import { join, resolve } from 'path';
 import { existsSync } from 'fs';
-import { createFrameworkLogger } from '../logger';
+import { randomBytes } from 'crypto';
+import { createFrameworkLogger, isQuiet } from '../logger';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import ora from 'ora';
@@ -19,6 +20,23 @@ import {
   commandsFor,
 } from '../utils/package-manager';
 import { assertValidProjectName } from '../utils/project-name';
+import {
+  databaseEnvLines,
+  databasePackages,
+  databaseSetupSource,
+  isDatabaseKind,
+} from '../utils/database-templates';
+import {
+  BETTER_AUTH_VERSION,
+  authComposeEnv,
+  authEndpointFields,
+  authEnvLines,
+  authReadmeEndpoints,
+  authReadmeSection,
+  authSecretSource,
+  authSetupSource,
+  authUsesProjectDatabase,
+} from '../utils/auth-templates';
 
 const execAsync = promisify(exec);
 
@@ -152,10 +170,12 @@ export function buildEquivalentCommand(projectName: string, config: ResolvedConf
   if (config.features.length > 0) {
     flags.push(`--features=${config.features.join(',')}`);
   }
+  // Only the stack flags above (or --fast) make init non-interactive.
+  // --package-manager on its own still prompts, so --fast is needed with it.
+  if (flags.length === 0) flags.push('--fast');
   if (config.packageManager !== 'npm') {
     flags.push(`--package-manager=${config.packageManager}`);
   }
-  if (flags.length === 0) flags.push('--fast');
   return ['npx @morojs/cli init', projectName, ...flags].join(' ');
 }
 
@@ -168,23 +188,25 @@ export class ProjectInitializer {
     const { warnings } = assertValidProjectName(projectName);
     validateInitFlags(options);
 
-    // Welcome banner
-    console.log(chalk.cyan(figlet.textSync('MoroJS', { horizontalLayout: 'full' })));
-    console.log(
-      boxen(
-        chalk.green(
-          options.dryRun
-            ? 'Previewing your MoroJS project (dry run – nothing will be written)...'
-            : 'Creating your magical MoroJS project...'
-        ),
-        {
-          padding: 1,
-          margin: 1,
-          borderStyle: 'round',
-          borderColor: 'green',
-        }
-      )
-    );
+    // Welcome banner (skipped under --quiet, which prints errors only)
+    if (!isQuiet()) {
+      console.log(chalk.cyan(figlet.textSync('MoroJS', { horizontalLayout: 'full' })));
+      console.log(
+        boxen(
+          chalk.green(
+            options.dryRun
+              ? 'Previewing your MoroJS project (dry run – nothing will be written)...'
+              : 'Creating your magical MoroJS project...'
+          ),
+          {
+            padding: 1,
+            margin: 1,
+            borderStyle: 'round',
+            borderColor: 'green',
+          }
+        )
+      );
+    }
 
     for (const warning of warnings) {
       this.logger.warn(`Project name warning: ${warning}`, 'Init');
@@ -230,7 +252,7 @@ export class ProjectInitializer {
       return;
     }
 
-    const spinner = ora('Creating project structure...').start();
+    const spinner = ora({ text: 'Creating project structure...', isSilent: isQuiet() }).start();
 
     try {
       // Create project directory
@@ -250,10 +272,16 @@ export class ProjectInitializer {
       ]);
 
       spinner.succeed('Project structure created!');
+      for (const file of this.previewFileTree(projectName, config)) {
+        this.logger.debug(`Wrote ${file}`, 'Init');
+      }
 
       // Initialize git repository
       if (!config.skipGit) {
-        const gitSpinner = ora('Initializing Git repository...').start();
+        const gitSpinner = ora({
+          text: 'Initializing Git repository...',
+          isSilent: isQuiet(),
+        }).start();
         try {
           await runTerminalCmd('git init', { cwd: projectPath });
           await runTerminalCmd('git add .', { cwd: projectPath });
@@ -269,22 +297,31 @@ export class ProjectInitializer {
       // Install dependencies using the chosen package manager
       const pmCmds = commandsFor(config.packageManager);
       if (!config.skipInstall) {
-        const installSpinner = ora(
-          `Installing dependencies with ${config.packageManager}...`
-        ).start();
+        const installSpinner = ora({
+          text: `Installing dependencies with ${config.packageManager}...`,
+          isSilent: isQuiet(),
+        }).start();
         try {
           await runTerminalCmd(pmCmds.install, { cwd: projectPath });
           installSpinner.succeed('Dependencies installed!');
         } catch (error) {
           installSpinner.fail(`Failed to install dependencies. Run "${pmCmds.install}" manually.`);
+          // The spinner is silent under --quiet; a failed install is still an error.
+          if (isQuiet()) {
+            this.logger.error(
+              `Failed to install dependencies. Run "${pmCmds.install}" manually.`,
+              'Init'
+            );
+          }
+          this.logger.debug(error instanceof Error ? error.message : String(error), 'Init');
         }
       }
 
       // Success message with next steps
-      this.displaySuccessMessage(projectName, config);
+      if (!isQuiet()) this.displaySuccessMessage(projectName, config);
 
       // Teach users the non-interactive flag form they could have used.
-      if (!nonInteractive) {
+      if (!nonInteractive && !isQuiet()) {
         const equivalent = buildEquivalentCommand(projectName, config);
         console.log(
           chalk.gray(
@@ -348,28 +385,30 @@ export class ProjectInitializer {
    */
   private previewFileTree(projectName: string, config: ResolvedConfig): string[] {
     const files: string[] = [
-      `${projectName}/package.json`,
-      `${projectName}/tsconfig.json`,
-      `${projectName}/moro.config.ts`,
-      `${projectName}/.env`,
-      `${projectName}/.env.example`,
-      `${projectName}/.gitignore`,
-      `${projectName}/README.md`,
-      `${projectName}/src/index.ts`,
-      `${projectName}/src/routes/index.ts`,
-      `${projectName}/src/routes/health/index.ts`,
-      `${projectName}/src/modules/.gitkeep`,
-      `${projectName}/src/middleware/.gitkeep`,
-      `${projectName}/src/types/index.ts`,
+      'package.json',
+      'tsconfig.json',
+      'moro.config.ts',
+      '.env',
+      '.env.example',
+      '.gitignore',
+      'README.md',
+      'src/index.ts',
+      'src/routes/index.ts',
+      'src/routes/health/index.ts',
+      // Written for every validation choice, including 'multiple'.
+      'src/validation/examples.ts',
     ];
-    if (config.runtime === 'node') files.push(`${projectName}/Dockerfile`);
-    if (config.database !== 'none') files.push(`${projectName}/src/database/index.ts`);
-    if (config.features.includes('auth')) files.push(`${projectName}/src/middleware/auth.ts`);
-    if (config.features.includes('websocket')) files.push(`${projectName}/src/websockets/index.ts`);
-    if (config.features.includes('testing')) files.push(`${projectName}/tests/app.test.ts`);
-    if (config.validation && config.validation !== 'multiple')
-      files.push(`${projectName}/src/validation/examples.ts`);
-    return files;
+    if (config.runtime === 'node') {
+      files.push('Dockerfile', '.dockerignore');
+      if (config.database !== 'none') files.push('docker-compose.yml');
+    }
+    if (config.database !== 'none') files.push('src/database/index.ts');
+    if (config.features.includes('auth')) {
+      files.push('src/middleware/auth.ts', 'src/middleware/auth-secret.ts');
+    }
+    if (config.features.includes('websocket')) files.push('src/websockets/index.ts');
+    if (config.features.includes('testing')) files.push('jest.config.js', 'tests/app.test.ts');
+    return files.map(file => `${projectName}/${file}`);
   }
 
   private async gatherProjectConfig(
@@ -543,6 +582,21 @@ export class ProjectInitializer {
     projectName: string,
     config: any
   ): Promise<void> {
+    // Nothing in the framework reads .env, so the scaffold loads it explicitly
+    // with dotenv (works on every Node version the generated `engines` allows;
+    // `node --env-file` / process.loadEnvFile need 20.6 / 20.12).
+    //  - node runtime: src/index.ts imports 'dotenv/config' first, so dev, start
+    //    and direct runs all see .env. dotenv is a runtime dependency.
+    //  - other runtimes: deployed code gets its environment from the platform
+    //    and must not import a filesystem loader, so .env is only preloaded by
+    //    the local `dev` script. dotenv is a dev dependency.
+    const isNode = config.runtime === 'node';
+    const DOTENV_VERSION = '^16.4.5';
+    const TSX_VERSION = '^4.20.5';
+    const dbPackages = isDatabaseKind(config.database)
+      ? databasePackages(config.database)
+      : { dependencies: {}, devDependencies: {} };
+
     const packageJson = {
       name: projectName,
       version: '1.0.0',
@@ -550,10 +604,18 @@ export class ProjectInitializer {
       type: 'module',
       main: 'dist/src/index.js',
       scripts: {
-        dev: 'tsx watch src/index.ts',
+        dev: isNode ? 'tsx watch src/index.ts' : 'tsx watch -r dotenv/config src/index.ts',
         build: 'tsc',
-        start: 'node dist/src/index.js',
-        test: 'morojs-cli test',
+        // node runtime: the compiled entry runs through tsx. At start-up the
+        // framework imports moro.config.ts and, outside production, the .ts files
+        // under src/routes and src/modules; plain Node before 22.18 cannot import
+        // TypeScript, so without a loader those are skipped on Node 20.
+        start: isNode ? 'tsx dist/src/index.js' : 'node dist/src/index.js',
+        // With the testing feature Jest is installed and has to run in ES module
+        // mode; without it the CLI's test command explains what to install.
+        test: config.features.includes('testing')
+          ? 'node --experimental-vm-modules node_modules/jest/bin/jest.js'
+          : 'morojs-cli test',
         lint: 'morojs-cli lint',
         'db:migrate': 'morojs-cli db migrate --up',
         'db:seed': 'morojs-cli db seed',
@@ -565,18 +627,12 @@ export class ProjectInitializer {
       },
       dependencies: {
         '@morojs/moro': 'latest',
-        ...(config.database === 'postgresql' && { pg: '^8.16.3', '@types/pg': '^8.15.5' }),
-        ...(config.database === 'mysql' && { mysql2: '^3.15.0' }),
-        ...(config.database === 'mongodb' && { mongodb: '^6.20.0' }),
-        ...(config.database === 'redis' && { redis: '^5.8.2' }),
-        ...(config.database === 'drizzle' && {
-          'drizzle-orm': '^0.44.5',
-          'drizzle-kit': '^0.31.4',
-        }),
+        ...(isNode && { dotenv: DOTENV_VERSION, tsx: TSX_VERSION }),
+        // The driver src/database/index.ts imports (see utils/database-templates).
+        ...dbPackages.dependencies,
+        // The only package src/middleware/auth.ts imports besides the framework.
         ...(config.features.includes('auth') && {
-          'better-auth': '^1.3.34',
-          bcryptjs: '^2.4.3',
-          jsonwebtoken: '^9.0.2',
+          'better-auth': BETTER_AUTH_VERSION,
         }),
         ...(config.features.includes('docs') && {
           'swagger-ui-dist': '^5.29.0',
@@ -588,19 +644,19 @@ export class ProjectInitializer {
           }),
         ...(config.features.includes('websocket') &&
           config.websocketAdapter === 'ws' && {
-            ws: '^8.18.3',
+            ws: '^8.21.0',
           }),
         ...(config.features.includes('websocket') &&
           config.websocketAdapter === 'auto-detect' && {
             'socket.io': '^4.8.1',
-            ws: '^8.18.3',
+            ws: '^8.21.0',
           }),
         // Validation library dependencies
         ...(config.validation === 'zod' && {
-          zod: '^4.1.11',
+          zod: '^4.6.6',
         }),
         ...(config.validation === 'joi' && {
-          joi: '^18.0.1',
+          joi: '^18.3.1',
         }),
         ...(config.validation === 'yup' && {
           yup: '^1.7.1',
@@ -611,8 +667,8 @@ export class ProjectInitializer {
           'reflect-metadata': '^0.2.2',
         }),
         ...(config.validation === 'multiple' && {
-          zod: '^4.1.11',
-          joi: '^18.0.1',
+          zod: '^4.6.6',
+          joi: '^18.3.1',
           yup: '^1.7.1',
           'class-validator': '^0.14.2',
           'class-transformer': '^0.5.1',
@@ -623,11 +679,11 @@ export class ProjectInitializer {
         '@morojs/cli': '^1.0.0',
         '@types/node': '^24.5.2',
         typescript: '^5.9.2',
-        tsx: '^4.20.5',
-        ...(config.features.includes('auth') && {
-          '@types/bcryptjs': '^2.4.6',
-          '@types/jsonwebtoken': '^9.0.10',
-        }),
+        // "start" needs tsx on the node runtime (see scripts), so there it is a
+        // runtime dependency; elsewhere only the local dev script uses it.
+        ...(!isNode && { tsx: TSX_VERSION }),
+        ...(!isNode && { dotenv: DOTENV_VERSION }),
+        ...dbPackages.devDependencies,
         ...(config.features.includes('testing') && {
           jest: '^30.1.3',
           '@types/jest': '^30.0.0',
@@ -713,6 +769,16 @@ export class ProjectInitializer {
 
     // Import lines, in order: framework then local (feature-gated).
     const importLines = [`import { ${moroImports.join(', ')} } from '@morojs/moro';`];
+    // Node: load .env before any other module is evaluated. Nothing else loads
+    // it (the framework does not), and imports run in order, so this stays first.
+    // Other runtimes get their environment from the platform; their local `dev`
+    // script preloads .env instead (see generatePackageJson).
+    if (isNode) {
+      importLines.unshift(
+        `// Load .env into process.env before anything else reads it. Keep this import first.`,
+        `import 'dotenv/config';`
+      );
+    }
     if (config.database !== 'none') {
       importLines.push(`import { setupDatabase } from './database/index.js';`);
     }
@@ -863,14 +929,7 @@ ${p2}});`;
     // --- / welcome route (top-level routes file) ---
     const endpointFields = [`health: '/health'`];
     if (config.features.includes('docs')) endpointFields.push(`docs: '/docs'`);
-    if (config.features.includes('auth')) {
-      endpointFields.push(
-        `login: '/api/auth/login'`,
-        `logout: '/api/auth/logout'`,
-        `profile: '/api/profile'`,
-        `status: '/api/auth/status'`
-      );
-    }
+    if (config.features.includes('auth')) endpointFields.push(...authEndpointFields());
 
     const renderWelcome = (pad: string): string => {
       const p2 = pad + '  ';
@@ -956,14 +1015,29 @@ ${renderWelcome('  ')}
     await writeFile(join(routesDir, 'health', 'index.ts'), healthContent);
   }
 
+  /** True when the generated project reads CORS_ORIGIN (HTTP CORS or the Socket.IO adapter). */
+  private usesCorsOrigin(config: any): boolean {
+    return (
+      config.features.includes('cors') ||
+      (config.features.includes('websocket') && config.websocketAdapter === 'socket.io')
+    );
+  }
+
   private getWebSocketConfigString(adapter: string): string {
     switch (adapter) {
       case 'socket.io':
         return `websocket: {
     adapter: new SocketIOAdapter(),
-    compression: true,
+    // true compresses messages for clients that support it: smaller messages, more CPU per message
+    compression: false,
     options: {
-      cors: { origin: '*' },
+      // Any origin in development; in production only the origins in CORS_ORIGIN.
+      cors: {
+        origin:
+          process.env.NODE_ENV === 'production'
+            ? (process.env.CORS_ORIGIN || '').split(',').map(origin => origin.trim()).filter(Boolean)
+            : '*'
+      },
       path: '/socket.io/'
     }
   },`;
@@ -979,12 +1053,18 @@ ${renderWelcome('  ')}
       default:
         return `websocket: {
     enabled: true,
-    compression: true
+    // true compresses messages for clients that support it: smaller messages, more CPU per message
+    compression: false
   },`;
     }
   }
 
   private async generateEnvFiles(projectPath: string, config: any): Promise<void> {
+    // A fresh random signing secret for this project's .env. It is never written
+    // anywhere else: .env.example is produced below with every value blanked.
+    const authSecret = randomBytes(32).toString('hex');
+    const usesCorsOrigin = this.usesCorsOrigin(config);
+
     const envContent = `# MoroJS ${config.template.toUpperCase()} Configuration
 
 # Server Configuration
@@ -994,53 +1074,20 @@ HOST=localhost
 LOG_LEVEL=info
 
 # Database Configuration
-${
-  config.database === 'postgresql'
-    ? `
-DATABASE_URL=postgresql://username:password@localhost:5432/database_name
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-POSTGRES_USER=username
-POSTGRES_PASSWORD=password
-POSTGRES_DB=database_name`
-    : ''
-}
-${
-  config.database === 'mysql'
-    ? `
-DATABASE_URL=mysql://username:password@localhost:3306/database_name
-MYSQL_HOST=localhost
-MYSQL_PORT=3306
-MYSQL_USER=username
-MYSQL_PASSWORD=password
-MYSQL_DATABASE=database_name`
-    : ''
-}
-${
-  config.database === 'mongodb'
-    ? `
-DATABASE_URL=mongodb://localhost:27017/database_name
-MONGODB_URI=mongodb://localhost:27017/database_name`
-    : ''
-}
-${
-  config.database === 'redis'
-    ? `
-REDIS_URL=redis://localhost:6379
-REDIS_HOST=localhost
-REDIS_PORT=6379`
-    : ''
-}
+${isDatabaseKind(config.database) ? `\n${databaseEnvLines(config.database)}` : ''}
 
 # Security Configuration
 ${
-  config.features.includes('auth')
+  usesCorsOrigin
     ? `
-AUTH_SECRET=your-super-secret-jwt-key-change-this-in-production
-JWT_EXPIRES_IN=24h
-BCRYPT_ROUNDS=12`
+# Browser origins allowed to call this API when NODE_ENV is production, as a
+# comma-separated list (for example https://app.example.com,https://admin.example.com).
+# Development allows any origin. While this is empty, production allows no
+# cross-origin browser requests.
+CORS_ORIGIN=`
     : ''
 }
+${config.features.includes('auth') ? `\n${authEnvLines(authSecret)}` : ''}
 
 # External Services (Optional)
 ${
@@ -1070,15 +1117,18 @@ CLOUDFLARE_API_TOKEN=`
 `;
 
     await writeFile(join(projectPath, '.env'), envContent);
+    // The example file keeps every key with an empty placeholder value, so the
+    // generated secret above never leaves .env (which .gitignore excludes).
     await writeFile(join(projectPath, '.env.example'), envContent.replace(/=.*/g, '='));
   }
 
   private async generateMoroConfig(projectPath: string, config: any): Promise<void> {
     // The optional `redis` sub-object is comma-separated from a preceding
     // database property. It only has a preceding property for these adapters;
-    // for redis/drizzle/sqlite it would be the first key, so no leading comma.
+    // for redis/sqlite it would be the first key, so no leading comma.
     const dbHasLeadingProp =
       config.database === 'postgresql' ||
+      config.database === 'drizzle' ||
       config.database === 'mysql' ||
       config.database === 'mongodb';
 
@@ -1087,12 +1137,36 @@ CLOUDFLARE_API_TOKEN=`
 // Reference: https://morojs.com/docs/configuration
 
 import type { AppConfig, DeepPartial } from '@morojs/moro';
+${
+  config.features.includes('cors')
+    ? `
+// Browser origins allowed to call this API in production: the comma-separated
+// list in CORS_ORIGIN (for example https://app.example.com,https://admin.example.com).
+// Development allows any origin. In production nothing is allowed until
+// CORS_ORIGIN is set: the CORS middleware then stays off and browsers apply the
+// same-origin policy. Same-origin and non-browser requests are not affected.
+const isProduction = process.env.NODE_ENV === 'production';
+const corsOrigins = (process.env.CORS_ORIGIN || process.env.MORO_CORS_ORIGIN || '')
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean);
 
+if (isProduction && corsOrigins.length === 0 && process.env.CORS_ENABLED !== 'false') {
+  console.warn(
+    'CORS_ORIGIN is not set: cross-origin browser requests are not allowed in production. ' +
+      'Set CORS_ORIGIN to a comma-separated list of origins to allow them.'
+  );
+}
+`
+    : ''
+}
 const moroConfig: DeepPartial<AppConfig> = {
   // Server Configuration
   server: {
     port: parseInt(process.env.PORT || process.env.MORO_PORT || '3000'),
     host: process.env.HOST || process.env.MORO_HOST || 'localhost',
+    // Behind a load balancer or reverse proxy, set this: req.ip, rate limits, secure cookies and auth then see the real client and scheme. Leave it unset when the app is reached directly.
+    // trustProxy: 1,
     bodySizeLimit: '10mb',
     requestTracking: {
       enabled: true
@@ -1103,7 +1177,10 @@ const moroConfig: DeepPartial<AppConfig> = {
       config.runtime === 'node'
         ? `,
     maxConnections: parseInt(process.env.MAX_CONNECTIONS || process.env.MORO_MAX_CONNECTIONS || '1000'),
-    timeout: parseInt(process.env.REQUEST_TIMEOUT || process.env.MORO_TIMEOUT || '30000')`
+    timeouts: {
+      // How long a request may take to arrive in full (ms)
+      request: parseInt(process.env.REQUEST_TIMEOUT || process.env.MORO_TIMEOUT || '30000')
+    }`
         : ''
     }
   },
@@ -1112,7 +1189,7 @@ ${
   config.database !== 'none' && config.database !== 'sqlite'
     ? `  // Database Configuration
   database: {${
-    config.database === 'postgresql'
+    config.database === 'postgresql' || config.database === 'drizzle'
       ? `
     url: process.env.DATABASE_URL || process.env.MORO_DATABASE_URL`
       : ''
@@ -1187,11 +1264,21 @@ ${
   // Security Configuration
   security: {
     cors: {
-      enabled: ${config.features.includes('cors') ? "process.env.CORS_ENABLED !== 'false'" : 'false'},${
+      enabled: ${
+        config.features.includes('cors')
+          ? "process.env.CORS_ENABLED !== 'false' && (!isProduction || corsOrigins.length > 0)"
+          : 'false'
+      },${
         config.features.includes('cors')
           ? `
-      origin: process.env.NODE_ENV === 'production'
-        ? (process.env.CORS_ORIGIN || process.env.MORO_CORS_ORIGIN || '*').split(',')
+      // Access-Control-Allow-Origin carries a single origin, so a listed origin
+      // is answered with itself. Any other request gets the first listed origin,
+      // which a browser on a different origin rejects.
+      origin: isProduction
+        ? (requestOrigin: string | undefined) =>
+            requestOrigin !== undefined && corsOrigins.includes(requestOrigin)
+              ? requestOrigin
+              : corsOrigins[0]
         : '*',
       methods: (process.env.CORS_METHODS || process.env.MORO_CORS_METHODS || 'GET,POST,PUT,DELETE,PATCH,OPTIONS').split(','),
       allowedHeaders: (process.env.CORS_HEADERS || process.env.MORO_CORS_HEADERS || 'Content-Type,Authorization').split(','),
@@ -1512,21 +1599,44 @@ ${pmCmds.run('build')}
 # Start production server
 ${pmCmds.run('start')}
 \`\`\`
-
+${
+  config.runtime === 'node'
+    ? `
+\`start\` runs the compiled entry (\`dist/src/index.js\`) through \`tsx\`. The framework imports \`moro.config.ts\` at start-up and, unless \`NODE_ENV\` is \`production\`, the TypeScript files under \`src/routes\` and \`src/modules\`; Node.js before 22.18 cannot import TypeScript by itself. The Docker image runs plain \`node\` in production mode with the compiled configuration.
+`
+    : ''
+}
 ## Endpoints
 
 - **Health Check**: \`GET /health\`
 - **Welcome**: \`GET /\`
-${config.features.includes('docs') ? `- **API Docs**: \`GET /docs\`` : ''}
+${[
+  config.features.includes('docs') ? `- **API Docs**: \`GET /docs\`` : '',
+  config.features.includes('auth') ? authReadmeEndpoints() : '',
+]
+  .filter(Boolean)
+  .join('\n')}
 
 ## Configuration
 
 This project includes a comprehensive configuration system:
 
 - **\`moro.config.ts\`** - Feature-based configuration with production-ready defaults
-- **\`.env\`** - Environment variables for development
+- **\`.env\`** - Environment variables for development (${
+      config.runtime === 'node'
+        ? "loaded on startup by `import 'dotenv/config'` in `src/index.ts`"
+        : 'preloaded by the `dev` script; deployed environments get their variables from the platform'
+    })
 - **\`.env.example\`** - Environment variables template
+${
+  config.features.includes('cors')
+    ? `
+### CORS
 
+Development allows any origin. In production (\`NODE_ENV=production\`) only the origins listed in \`CORS_ORIGIN\` are allowed, as a comma-separated list such as \`https://app.example.com,https://admin.example.com\`. While \`CORS_ORIGIN\` is empty, production sends no CORS headers and logs a warning at start-up.
+`
+    : ''
+}${config.features.includes('auth') ? `\n${authReadmeSection(config.database, config.runtime)}` : ''}
 ### Production Setup
 
 1. Set up production environment variables:
@@ -1546,15 +1656,21 @@ This project includes a comprehensive configuration system:
 ${
   config.database !== 'none'
     ? `
-This project uses **${config.database}** as the primary database.
+This project uses **${config.database}** as the primary database. The connection is opened in \`src/database/index.ts\` from the variables in \`.env\`; the app keeps running without a database when that connection fails${
+        config.features.includes('auth') && authUsesProjectDatabase(config.database)
+          ? ' (with one exception: a production start stops when sign-in has no connection, see [Authentication](#authentication))'
+          : ''
+      }.
 
 \`\`\`bash
-# Run migrations
+# List the migration files in src/database/migrations
 ${pmCmds.run('db:migrate')}
 
-# Seed database
+# List the seed files in src/database/seeds
 ${pmCmds.run('db:seed')}
 \`\`\`
+
+These two scripts do not execute SQL. \`npx @morojs/cli db setup <type> --with-migrations --with-seeds\` generates \`MigrationRunner\` and \`SeedRunner\` classes you can call from your own code.
 `
     : 'No database configured. Add one with `npx @morojs/cli db setup <type>`.'
 }
@@ -1571,14 +1687,24 @@ ${pmCmds.run('test')}
 # Lint code
 ${pmCmds.run('lint')}
 \`\`\`
-
+${
+  config.features.includes('testing')
+    ? `
+Tests run with Jest in ES module mode (\`jest.config.js\`, started with \`--experimental-vm-modules\` by the \`test\` script). ${
+        config.runtime === 'node'
+          ? '`tests/app.test.ts` starts the app on a free port, calls it over HTTP and closes it again.'
+          : '`tests/app.test.ts` calls the handler exported by `src/index.ts` directly.'
+      }
+`
+    : ''
+}
 ## Module Development
 
 Create new modules with the MoroJS CLI:
 
 \`\`\`bash
-# Create a new module
-npx @morojs/cli module create users --features=database,auth,cache
+# Create a new module (served under /api/v1.0.0/users)
+npx @morojs/cli module create users --features=database
 
 # List all modules
 npx @morojs/cli module list
@@ -1671,11 +1797,18 @@ FROM node:20-alpine AS base
 FROM base AS deps
 # Check https://github.com/nodejs/docker-node/tree/b4117f9333da4138b03a546ec926ef50a31506c3#nodealpine to understand why libc6-compat might be needed.
 RUN apk add --no-cache libc6-compat
-WORKDIR /app
+${
+  config.database === 'sqlite'
+    ? `# better-sqlite3 is compiled from source when it has no prebuilt binary for this platform
+RUN apk add --no-cache python3 make g++
+`
+    : ''
+}WORKDIR /app
 
-# Copy package files
+# Copy package files. All dependencies are installed here: the build stage
+# needs the TypeScript compiler, which is a devDependency.
 COPY package*.json ./
-RUN npm ci --only=production
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
 # Rebuild the source code only when needed
 FROM base AS builder
@@ -1683,55 +1816,83 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Build the application
+# Build the application, then drop devDependencies so that only runtime
+# packages are copied into the final image
 RUN npm run build
+RUN npm prune --omit=dev
 
 # Production image, copy all the files and run the app
 FROM base AS runner
 WORKDIR /app
 
-ENV NODE_ENV production
+ENV NODE_ENV=production
 
 RUN addgroup --system --gid 1001 morojs
 RUN adduser --system --uid 1001 morojs
-
+${
+  config.database === 'sqlite'
+    ? `
+# Writable directory for the SQLite database file (SQLITE_DATABASE, default ./data/app.db)
+RUN mkdir -p /app/data && chown morojs:morojs /app/data
+`
+    : ''
+}
 # Copy built application
 COPY --from=builder --chown=morojs:morojs /app/dist ./dist
 COPY --from=builder --chown=morojs:morojs /app/node_modules ./node_modules
 COPY --from=builder --chown=morojs:morojs /app/package.json ./package.json
+# The framework reads moro.config.* from the working directory. Node cannot
+# import the TypeScript source here, so ship the compiled copy next to dist/.
+COPY --from=builder --chown=morojs:morojs /app/dist/moro.config.js ./moro.config.js
 
 USER morojs
 
 EXPOSE 3000
 
-ENV PORT 3000
-ENV HOST 0.0.0.0
+ENV PORT=3000
+ENV HOST=0.0.0.0
 
-CMD ["node", "dist/index.js"]`;
+# tsc compiles src/index.ts to dist/src/index.js (same path as the "start" script)
+CMD ["node", "dist/src/index.js"]`;
 
     await writeFile(join(projectPath, 'Dockerfile'), dockerContent);
 
-    // Docker compose for development with database
+    // Keep the host's node_modules (built for the host platform), build output
+    // and local secrets out of the image build context.
+    const dockerignoreContent = `node_modules
+dist
+.git
+.env
+.env.*
+!.env.example
+logs
+*.log
+coverage
+data
+*.db
+*.sqlite
+`;
+
+    await writeFile(join(projectPath, '.dockerignore'), dockerignoreContent);
+
+    // Docker compose: the app image plus its database
     if (config.database !== 'none') {
-      const composeContent = `version: '3.8'
+      await writeFile(join(projectPath, 'docker-compose.yml'), this.composeContent(config));
+    }
+  }
 
-services:
-  app:
-    build: .
-    ports:
-      - "3000:3000"
-    environment:
-      - NODE_ENV=development
-      - DATABASE_URL=\${DATABASE_URL}
-    depends_on:
-      - database
-    volumes:
-      - .:/app
-      - /app/node_modules
+  /**
+   * docker-compose.yml for the node runtime: the app image built from the
+   * Dockerfile, wired to the database service it depends on. Values come from
+   * .env when present, with defaults that match between the two services.
+   */
+  private composeContent(config: any): string {
+    const appEnv: string[] = [];
+    let dependsOn = '';
+    let services = '';
+    let volumes = '';
 
-${
-  config.database === 'postgresql'
-    ? `
+    const postgresService = `
   database:
     image: postgres:15-alpine
     environment:
@@ -1742,33 +1903,72 @@ ${
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \${POSTGRES_USER:-postgres} -d \${POSTGRES_DB:-myapp}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+`;
 
-volumes:
-  postgres_data:`
-    : ''
-}
-${
-  config.database === 'mysql'
-    ? `
+    switch (config.database) {
+      case 'postgresql':
+        appEnv.push(
+          'POSTGRES_HOST=database',
+          'POSTGRES_PORT=5432',
+          'POSTGRES_USER=${POSTGRES_USER:-postgres}',
+          'POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}',
+          'POSTGRES_DB=${POSTGRES_DB:-myapp}',
+          'DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@database:5432/${POSTGRES_DB:-myapp}'
+        );
+        dependsOn = 'database';
+        services = postgresService;
+        volumes = 'postgres_data';
+        break;
+      case 'drizzle':
+        appEnv.push(
+          'DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@database:5432/${POSTGRES_DB:-myapp}'
+        );
+        dependsOn = 'database';
+        services = postgresService;
+        volumes = 'postgres_data';
+        break;
+      case 'mysql':
+        appEnv.push(
+          'MYSQL_HOST=database',
+          'MYSQL_PORT=3306',
+          'MYSQL_USERNAME=${MYSQL_USERNAME:-mysql}',
+          'MYSQL_PASSWORD=${MYSQL_PASSWORD:-password}',
+          'MYSQL_DATABASE=${MYSQL_DATABASE:-myapp}',
+          'DATABASE_URL=mysql://${MYSQL_USERNAME:-mysql}:${MYSQL_PASSWORD:-password}@database:3306/${MYSQL_DATABASE:-myapp}'
+        );
+        dependsOn = 'database';
+        services = `
   database:
     image: mysql:8.0
     environment:
       MYSQL_ROOT_PASSWORD: \${MYSQL_PASSWORD:-password}
       MYSQL_DATABASE: \${MYSQL_DATABASE:-myapp}
-      MYSQL_USER: \${MYSQL_USER:-mysql}
+      MYSQL_USER: \${MYSQL_USERNAME:-mysql}
       MYSQL_PASSWORD: \${MYSQL_PASSWORD:-password}
     ports:
       - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
-
-volumes:
-  mysql_data:`
-    : ''
-}
-${
-  config.database === 'mongodb'
-    ? `
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-p\${MYSQL_PASSWORD:-password}"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+`;
+        volumes = 'mysql_data';
+        break;
+      case 'mongodb':
+        appEnv.push(
+          'MONGODB_URI=mongodb://database:27017/${MONGO_DATABASE:-myapp}',
+          'DATABASE_URL=mongodb://database:27017/${MONGO_DATABASE:-myapp}'
+        );
+        dependsOn = 'database';
+        services = `
   database:
     image: mongo:7
     environment:
@@ -1777,28 +1977,61 @@ ${
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
-
-volumes:
-  mongo_data:`
-    : ''
-}
-${
-  config.database === 'redis'
-    ? `
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+`;
+        volumes = 'mongo_data';
+        break;
+      case 'redis':
+        appEnv.push('REDIS_URL=redis://redis:6379');
+        dependsOn = 'redis';
+        services = `
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
-
-volumes:
-  redis_data:`
-    : ''
-}`;
-
-      await writeFile(join(projectPath, 'docker-compose.yml'), composeContent);
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+`;
+        volumes = 'redis_data';
+        break;
+      case 'sqlite':
+        // No database service: the file lives in a named volume.
+        appEnv.push('SQLITE_DATABASE=/app/data/app.db');
+        volumes = 'sqlite_data';
+        break;
     }
+
+    if (config.features.includes('auth')) appEnv.push(...authComposeEnv());
+    if (this.usesCorsOrigin(config)) appEnv.push('CORS_ORIGIN=${CORS_ORIGIN:-}');
+
+    const lines: string[] = [
+      `version: '3.8'`,
+      '',
+      'services:',
+      '  app:',
+      '    build: .',
+      '    ports:',
+      '      - "3000:3000"',
+      '    environment:',
+      ...appEnv.map(entry => `      - ${entry}`),
+    ];
+    // Wait for the database to accept connections: setupDatabase() tries once
+    // at start-up and carries on without a connection when that attempt fails.
+    if (dependsOn) {
+      lines.push('    depends_on:', `      ${dependsOn}:`, '        condition: service_healthy');
+    }
+    if (config.database === 'sqlite') lines.push('    volumes:', '      - sqlite_data:/app/data');
+
+    return `${lines.join('\n')}\n${services}\nvolumes:\n  ${volumes}:\n`;
   }
 
   private async generateProjectStructure(projectPath: string, config: any): Promise<void> {
@@ -1839,7 +2072,7 @@ volumes:
 
     // Generate auth middleware if auth is enabled
     if (config.features.includes('auth')) {
-      await this.generateAuthMiddleware(projectPath);
+      await this.generateAuthMiddleware(projectPath, config);
     }
 
     // Generate WebSocket setup if WebSocket is enabled
@@ -1852,556 +2085,30 @@ volumes:
 
     // Generate test setup if testing is enabled
     if (config.features.includes('testing')) {
-      await this.generateTestSetup(projectPath);
+      await this.generateTestSetup(projectPath, config);
     }
   }
 
   private async generateDatabaseSetup(projectPath: string, config: any): Promise<void> {
-    // Fix the adapter name for PostgreSQL (should be PostgreSQLAdapter, not PostgresqlAdapter)
-    const getAdapterName = (dbType: string) => {
-      if (dbType === 'postgresql') return 'PostgreSQLAdapter';
-      return dbType.charAt(0).toUpperCase() + dbType.slice(1) + 'Adapter';
-    };
+    // Every database choice gets a working setupDatabase(): src/index.ts imports
+    // and awaits it, so an empty file here would stop the project compiling.
+    if (!isDatabaseKind(config.database)) return;
 
-    const adapterName = getAdapterName(config.database);
-
-    const dbSetupContent =
-      config.database === 'postgresql'
-        ? `// Database Setup and Configuration
-import pg from 'pg';
-import { createFrameworkLogger } from '@morojs/moro';
-
-const logger = createFrameworkLogger('Database');
-
-export async function setupDatabase(app: any): Promise<void> {
-  try {
-    const pool = new pg.Pool({
-      host: process.env.POSTGRESQL_HOST || 'localhost',
-      port: parseInt(process.env.POSTGRESQL_PORT || '5432'),
-      user: process.env.POSTGRESQL_USER || 'postgres',
-      password: process.env.POSTGRESQL_PASSWORD || 'postgres',
-      database: process.env.POSTGRESQL_DATABASE || 'postgres'
-    });
-
-    await pool.connect();
-    app.database = pool;
-
-    logger.info('✅ Database connected successfully', 'Database');
-  } catch (error) {
-    logger.error('❌ Database connection failed: ' + String(error), 'Database');
-    logger.warn('⚠️  App will continue without database connection', 'Database');
-    // Don't throw - let the app continue without database
-  }
-}`
-        : config.database === 'mysql'
-          ? `// Database Setup and Configuration
-import mysql from 'mysql2/promise';
-import { createFrameworkLogger } from '@morojs/moro';
-
-const logger = createFrameworkLogger('Database');
-
-export async function setupDatabase(app: any): Promise<void> {
-  try {
-    const pool = await mysql.createPool({
-      host: process.env.MYSQL_HOST || 'localhost',
-      port: parseInt(process.env.MYSQL_PORT || '3306'),
-      user: process.env.MYSQL_USER || 'mysql',
-      password: process.env.MYSQL_PASSWORD || 'mysql',
-      database: process.env.MYSQL_DATABASE || 'mysql'
-    });
-
-    app.database = pool;
-    logger.info('✅ Database connected successfully', 'Database');
-  } catch (error) {
-    logger.error('❌ Database connection failed: ' + String(error), 'Database');
-    logger.warn('⚠️  App will continue without database connection', 'Database');
-    // Don't throw - let the app continue without database
-  }
-}`
-          : config.database === 'mongodb'
-            ? `// Database Setup and Configuration
-import { MongoClient } from 'mongodb';
-import { createFrameworkLogger } from '@morojs/moro';
-
-const logger = createFrameworkLogger('Database');
-
-export async function setupDatabase(app: any): Promise<void> {
-  try {
-    const client = new MongoClient(process.env.MONGODB_URI || 'mongodb://localhost:27017');
-    await client.connect();
-    app.database = client.db(process.env.MONGODB_DATABASE || 'test');
-    logger.info('✅ Database connected successfully', 'Database');
-  } catch (error) {
-    logger.error('❌ Database connection failed: ' + String(error), 'Database');
-    logger.warn('⚠️  App will continue without database connection', 'Database');
-    // Don't throw - let the app continue without database
-  }
-}`
-            : '';
-
-    await writeFile(join(projectPath, 'src', 'database', 'index.ts'), dbSetupContent);
+    await writeFile(
+      join(projectPath, 'src', 'database', 'index.ts'),
+      databaseSetupSource(config.database) + '\n'
+    );
   }
 
-  private async generateAuthMiddleware(projectPath: string): Promise<void> {
-    const authContent = `// Authentication Middleware for MoroJS with better-auth
-import { auth, providers } from '@morojs/moro';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
-
-export async function setupAuth(app: any): Promise<void> {
-  // Setup MoroJS better-auth integration
-  app.use(auth({
-    providers: [
-      // Credentials provider for email/password login
-      providers.credentials({
-        name: 'Credentials',
-        credentials: {
-          email: { label: 'Email', type: 'text', placeholder: 'user@example.com' },
-          password: { label: 'Password', type: 'password' }
-        },
-        authorize: async (credentials: any) => {
-          if (!credentials?.email || !credentials?.password) {
-            console.log('🔐 Missing credentials');
-            return null;
-          }
-
-          try {
-            // TODO: Replace with actual database query
-            // Example: Find user by email in your database
-            // const user = await db.select().from(users).where(eq(users.email, credentials.email)).limit(1);
-
-            // Mock user for demonstration
-            const mockUser = {
-              id: '1',
-              email: 'admin@example.com',
-              password: await bcrypt.hash('password', 12), // In production, this would come from database
-              status: 'active',
-              roles: ['user']
-            };
-
-            if (credentials.email !== mockUser.email) {
-              console.log('🔐 User not found:', credentials.email);
-              return null;
-            }
-
-            // Check if user is active
-            if (mockUser.status !== 'active') {
-              console.log('🔐 User account is not active:', mockUser.status);
-              return null;
-            }
-
-            // Verify password
-            const isValidPassword = await bcrypt.compare(credentials.password, mockUser.password);
-            if (!isValidPassword) {
-              console.log('🔐 Invalid password for:', credentials.email);
-              return null;
-            }
-
-            console.log('✅ User authenticated successfully:', credentials.email);
-
-            // Return user data (excluding sensitive info like password)
-            return {
-              id: mockUser.id,
-              name: mockUser.email,
-              email: mockUser.email,
-              roles: mockUser.roles,
-              status: mockUser.status
-            };
-          } catch (error) {
-            console.error('🔐 Authentication error:', error);
-            return null;
-          }
-        }
-      })
-    ],
-    secret: process.env.AUTH_SECRET || 'your-super-secret-jwt-key-change-this-in-production',
-    session: {
-      strategy: 'jwt',
-      maxAge: 8 * 60 * 60 // 8 hours
-    },
-    callbacks: {
-      async jwt({ token, user }: any) {
-        // Persist user data in JWT token
-        if (user) {
-          token.id = user.id;
-          token.email = user.email;
-          token.roles = user.roles;
-          token.status = user.status;
-        }
-        return token;
-      },
-      async session({ session, token }: any) {
-        // Send properties to the client
-        if (token) {
-          session.user = {
-            id: token.id,
-            name: token.name,
-            email: token.email,
-            roles: token.roles,
-            status: token.status
-          };
-        }
-        return session;
-      }
-    }
-  }));
-
-  // Authentication status endpoint
-  app.get('/api/auth/status')
-    .describe('Get current authentication status')
-    .tag('Authentication')
-    .handler(async (req: any, res: any) => {
-      try {
-        const secret = process.env.AUTH_SECRET || 'your-super-secret-jwt-key-change-this-in-production';
-
-        // Try to get token from cookie first, then Authorization header
-        let token = req.cookies?.['auth-token'];
-        if (!token && req.headers.authorization) {
-          const authHeader = req.headers.authorization;
-          if (authHeader.startsWith('Bearer ')) {
-            token = authHeader.substring(7);
-          }
-        }
-
-        if (!token) {
-          return {
-            success: true,
-            isAuthenticated: false,
-            user: null
-          };
-        }
-
-        // Verify and decode JWT token
-        const decoded = jwt.verify(token, secret) as any;
-
-        return {
-          success: true,
-          isAuthenticated: true,
-          user: {
-            id: decoded.id,
-            email: decoded.email,
-            roles: decoded.roles,
-            status: decoded.status
-          }
-        };
-      } catch (error) {
-        // Token is invalid or expired
-        return {
-          success: true,
-          isAuthenticated: false,
-          user: null
-        };
-      }
-    });
-
-  // Login endpoint - handles JWT token creation
-  app.post('/api/auth/login')
-    .describe('User login with email and password')
-    .tag('Authentication')
-    .handler(async (req: any, res: any) => {
-      try {
-        const { email, password } = req.body;
-
-        if (!email || !password) {
-          res.status(400);
-          return {
-            success: false,
-            error: 'Email and password are required'
-          };
-        }
-
-        // TODO: Replace with actual database query
-        // Mock user for demonstration
-        const mockUser = {
-          id: '1',
-          email: 'admin@example.com',
-          password: await bcrypt.hash('password', 12),
-          status: 'active',
-          roles: ['user']
-        };
-
-        if (email !== mockUser.email) {
-          res.status(401);
-          return {
-            success: false,
-            error: 'Invalid credentials'
-          };
-        }
-
-        // Check if user is active
-        if (mockUser.status !== 'active') {
-          res.status(401);
-          return {
-            success: false,
-            error: 'Account is not active'
-          };
-        }
-
-        // Verify password
-        const isValidPassword = await bcrypt.compare(password, mockUser.password);
-        if (!isValidPassword) {
-          res.status(401);
-          return {
-            success: false,
-            error: 'Invalid credentials'
-          };
-        }
-
-        // Create JWT token
-        const secret = process.env.AUTH_SECRET || 'your-super-secret-jwt-key-change-this-in-production';
-
-        const tokenPayload = {
-          id: mockUser.id,
-          email: mockUser.email,
-          roles: mockUser.roles,
-          status: mockUser.status,
-          iat: Math.floor(Date.now() / 1000),
-          exp: Math.floor(Date.now() / 1000) + (8 * 60 * 60) // 8 hours
-        };
-
-        const token = jwt.sign(tokenPayload, secret);
-
-        // Set JWT token as HTTP-only cookie
-        res.cookie('auth-token', token, {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: 'lax',
-          path: '/',
-          maxAge: 8 * 60 * 60 * 1000 // 8 hours
-        });
-
-        return {
-          success: true,
-          message: 'Login successful',
-          user: {
-            id: mockUser.id,
-            email: mockUser.email,
-            roles: mockUser.roles,
-            status: mockUser.status
-          },
-          token: token // Also return token in response for API clients
-        };
-      } catch (error) {
-        console.error('Login error:', error);
-        res.status(500);
-        return {
-          success: false,
-          error: 'Login failed',
-          details: error instanceof Error ? error.message : 'Unknown error'
-        };
-      }
-    });
-
-  // Logout endpoint
-  app.post('/api/auth/logout')
-    .describe('User logout')
-    .tag('Authentication')
-    .handler(async (req: any, res: any) => {
-      try {
-        // Clear the auth cookie
-        res.cookie('auth-token', '', {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: 'lax',
-          path: '/',
-          maxAge: 0
-        });
-
-        return {
-          success: true,
-          message: 'Logout successful'
-        };
-      } catch (error) {
-        res.status(500);
-        return {
-          success: false,
-          error: 'Logout failed',
-          details: error instanceof Error ? error.message : 'Unknown error'
-        };
-      }
-    });
-
-  // Protected profile endpoint
-  app.get('/api/profile')
-    .describe('Get authenticated user profile')
-    .tag('Authentication')
-    .handler(async (req: any, res: any) => {
-      try {
-        const secret = process.env.AUTH_SECRET || 'your-super-secret-jwt-key-change-this-in-production';
-
-        // Try to get token from cookie first, then Authorization header
-        let token = req.cookies?.['auth-token'];
-        if (!token && req.headers.authorization) {
-          const authHeader = req.headers.authorization;
-          if (authHeader.startsWith('Bearer ')) {
-            token = authHeader.substring(7);
-          }
-        }
-
-        if (!token) {
-          res.status(401);
-          return {
-            success: false,
-            error: 'Authentication required'
-          };
-        }
-
-        // Verify and decode JWT token
-        const decoded = jwt.verify(token, secret) as any;
-
-        return {
-          success: true,
-          user: {
-            id: decoded.id,
-            email: decoded.email,
-            roles: decoded.roles,
-            status: decoded.status
-          }
-        };
-      } catch (error) {
-        res.status(401);
-        return {
-          success: false,
-          error: 'Authentication required'
-        };
-      }
-    });
-
-  // Admin-only endpoint example
-  app.get('/api/admin')
-    .describe('Admin access required endpoint')
-    .tag('Authentication')
-    .handler(async (req: any, res: any) => {
-      try {
-        const secret = process.env.AUTH_SECRET || 'your-super-secret-jwt-key-change-this-in-production';
-
-        // Try to get token from cookie first, then Authorization header
-        let token = req.cookies?.['auth-token'];
-        if (!token && req.headers.authorization) {
-          const authHeader = req.headers.authorization;
-          if (authHeader.startsWith('Bearer ')) {
-            token = authHeader.substring(7);
-          }
-        }
-
-        if (!token) {
-          res.status(401);
-          return {
-            success: false,
-            error: 'Authentication required'
-          };
-        }
-
-        // Verify and decode JWT token
-        const decoded = jwt.verify(token, secret) as any;
-
-        // Check for admin role
-        const isAdmin = decoded.roles?.includes('admin');
-
-        if (!isAdmin) {
-          res.status(403);
-          return {
-            success: false,
-            error: 'Admin access required'
-          };
-        }
-
-        return {
-          success: true,
-          message: 'Admin access granted',
-          user: {
-            id: decoded.id,
-            email: decoded.email,
-            roles: decoded.roles
-          }
-        };
-      } catch (error) {
-        res.status(401);
-        return {
-          success: false,
-          error: 'Authentication required'
-        };
-      }
-    });
-
-  // Authentication middleware that attaches user to request
-  app.use(async (req: any, res: any, next: any) => {
-    try {
-      const secret = process.env.AUTH_SECRET || 'your-super-secret-jwt-key-change-this-in-production';
-
-      // Try to get token from cookie first, then Authorization header
-      let token = req.cookies?.['auth-token'];
-      if (!token && req.headers.authorization) {
-        const authHeader = req.headers.authorization;
-        if (authHeader.startsWith('Bearer ')) {
-          token = authHeader.substring(7);
-        }
-      }
-
-      if (token) {
-        try {
-          // Verify and decode JWT token
-          const decoded = jwt.verify(token, secret) as any;
-
-          // Set req.user for the request
-          req.user = {
-            id: decoded.id,
-            email: decoded.email,
-            roles: decoded.roles || ['user'],
-            status: decoded.status
-          };
-
-          // Also set req.auth for better-auth compatibility
-          req.auth = {
-            user: req.user,
-            session: null,
-            isAuthenticated: true,
-            getSession: async () => null,
-            getToken: async () => decoded,
-            signIn: () => Promise.resolve('/api/auth/signin'),
-            signOut: () => Promise.resolve('/api/auth/signout'),
-            getCsrfToken: () => Promise.resolve(''),
-            getProviders: () => Promise.resolve({})
-          };
-        } catch (error) {
-          // Token is invalid or expired
-          console.log('Invalid token:', error);
-          req.auth = {
-            user: null,
-            session: null,
-            isAuthenticated: false,
-            getSession: async () => null,
-            getToken: async () => null,
-            signIn: () => Promise.resolve('/api/auth/signin'),
-            signOut: () => Promise.resolve('/api/auth/signout'),
-            getCsrfToken: () => Promise.resolve(''),
-            getProviders: () => Promise.resolve({})
-          };
-        }
-      } else {
-        // No token provided
-        req.auth = {
-          user: null,
-          session: null,
-          isAuthenticated: false,
-          getSession: async () => null,
-          getToken: async () => null,
-          signIn: () => Promise.resolve('/api/auth/signin'),
-          signOut: () => Promise.resolve('/api/auth/signout'),
-          getCsrfToken: () => Promise.resolve(''),
-          getProviders: () => Promise.resolve({})
-        };
-      }
-
-      next();
-    } catch (error) {
-      console.log('Auth middleware error:', error);
-      next();
-    }
-  });
-}`;
-
-    await writeFile(join(projectPath, 'src', 'middleware', 'auth.ts'), authContent);
+  /**
+   * src/middleware/auth.ts (sign-in on Better Auth, wired to the project's
+   * database when Better Auth can take its connection) and the AUTH_SECRET
+   * loader next to it.
+   */
+  private async generateAuthMiddleware(projectPath: string, config: any): Promise<void> {
+    const middlewareDir = join(projectPath, 'src', 'middleware');
+    await writeFile(join(middlewareDir, 'auth.ts'), authSetupSource(config.database));
+    await writeFile(join(middlewareDir, 'auth-secret.ts'), authSecretSource());
   }
 
   private async generateWebSocketSetup(projectPath: string, config: any): Promise<void> {
@@ -2490,44 +2197,19 @@ export const sampleWebSocketHandlers = {
   }
 
   private getWebSocketExampleCode(adapter: string): string {
-    switch (adapter) {
-      case 'socket.io':
-        return `// Socket.IO specific setup
-    const wsAdapter = app.getWebSocketAdapter();
-    if (wsAdapter && wsAdapter.getAdapterName() === 'socket.io') {
-      // Access to Socket.IO specific features
-      const namespace = wsAdapter.createNamespace('/chat');
-      namespace.on('connection', sampleWebSocketHandlers.connection);
-
-      logger.info('Socket.IO namespace "/chat" created', 'WebSocket');
-    }`;
-      case 'ws':
-        return `// Native WebSocket (ws) specific setup
-    const wsAdapter = app.getWebSocketAdapter();
-    if (wsAdapter && wsAdapter.getAdapterName() === 'ws') {
-      // Access to ws-specific features
-      const namespace = wsAdapter.getDefaultNamespace();
-      namespace.on('connection', sampleWebSocketHandlers.connection);
-
-      logger.info('Native WebSocket connection handler registered', 'WebSocket');
-    }`;
-      case 'auto-detect':
-      default:
-        return `// Auto-detected adapter setup
-    const wsAdapter = app.getWebSocketAdapter();
-    if (wsAdapter) {
-      const adapterName = wsAdapter.getAdapterName();
-      logger.info(\`Auto-detected adapter: \${adapterName}\`, 'WebSocket');
-
-      // Universal setup that works with any adapter
-      const namespace = wsAdapter.getDefaultNamespace();
-      namespace.on('connection', sampleWebSocketHandlers.connection);
-
-      logger.info(\`WebSocket handlers registered on \${adapterName} adapter\`, 'WebSocket');
-    } else {
-      logger.warn('No WebSocket adapter found - install socket.io or ws package', 'WebSocket');
-    }`;
+    if (adapter === 'none') {
+      // No adapter is passed to createApp() for this choice, so WebSockets are
+      // not enabled and registering a namespace would stop the server starting.
+      return `// No WebSocket adapter was selected, so nothing is registered here.
+    // To enable WebSockets, pass a websocket option to createApp() in
+    // src/index.ts (for example websocket: { enabled: true }) and then register
+    // the handlers below with: app.websocket('/', sampleWebSocketHandlers);
+    logger.info('No WebSocket adapter configured - sample handlers not registered', 'WebSocket');`;
     }
+
+    return `// Register the sample handlers on the default namespace. app.websocket()
+    // works with whichever adapter createApp() was given in src/index.ts.
+    app.websocket('/', sampleWebSocketHandlers);`;
   }
 
   private async generateValidationExamples(projectPath: string, config: any): Promise<void> {
@@ -2869,56 +2551,166 @@ export const UserSchema = z.object({
     }
   }
 
-  private async generateTestSetup(projectPath: string): Promise<void> {
-    // Jest configuration
-    const jestConfig = {
-      preset: 'ts-jest',
-      testEnvironment: 'node',
-      roots: ['<rootDir>/src', '<rootDir>/tests'],
-      testMatch: ['**/__tests__/**/*.ts', '**/?(*.)+(spec|test).ts'],
-      collectCoverageFrom: [
-        'src/**/*.ts',
-        '!src/**/*.d.ts',
-        '!src/**/*.test.ts',
-        '!src/**/*.spec.ts',
-      ],
-      coverageDirectory: 'coverage',
-      coverageReporters: ['text', 'lcov', 'html'],
-    };
+  private async generateTestSetup(projectPath: string, config: any): Promise<void> {
+    // The generated project is an ES module package ("type": "module"), so the
+    // Jest configuration is an ES module too and the TypeScript sources are
+    // transformed as ES modules. The "test" script starts Jest with
+    // --experimental-vm-modules, which that mode needs.
+    const jestConfig = `// Jest configuration for an ES module project ("type": "module" in package.json).
+// Run it with "npm test": the script starts Jest with --experimental-vm-modules.
+export default {
+  preset: 'ts-jest/presets/default-esm',
+  testEnvironment: 'node',
+  roots: ['<rootDir>/src', '<rootDir>/tests'],
+  testMatch: ['**/__tests__/**/*.ts', '**/?(*.)+(spec|test).ts'],
+  extensionsToTreatAsEsm: ['.ts'],
+  // Source files import each other with a .js extension; map it back to the .ts file.
+  moduleNameMapper: {
+    '^(\\\\.{1,2}/.*)\\\\.js$': '$1'
+  },
+  transform: {
+    '^.+\\\\.ts$': ['ts-jest', { useESM: true }]
+  },
+  collectCoverageFrom: [
+    'src/**/*.ts',
+    '!src/**/*.d.ts',
+    '!src/**/*.test.ts',
+    '!src/**/*.spec.ts'
+  ],
+  coverageDirectory: 'coverage',
+  coverageReporters: ['text', 'lcov', 'html']
+};
+`;
 
-    await writeFile(
-      join(projectPath, 'jest.config.js'),
-      `module.exports = ${JSON.stringify(jestConfig, null, 2)};`
-    );
+    await writeFile(join(projectPath, 'jest.config.js'), jestConfig);
+    await writeFile(join(projectPath, 'tests', 'app.test.ts'), this.sampleTestContent(config));
+  }
 
-    // Sample test file
-    const testContent = `// Sample Integration Test
-import request from 'supertest';
-import { app } from '../src/index';
-
-describe('API Health Checks', () => {
+  /**
+   * The sample test for the selected runtime. It talks to the app the way that
+   * runtime does: over HTTP for node, through the exported handler otherwise.
+   */
+  private sampleTestContent(config: any): string {
+    const assertions = (bodyOf: (path: string) => string) => `describe('API Health Checks', () => {
   test('GET /health should return healthy status', async () => {
-    const response = await request(app.core.getHttpServer().getServer())
-      .get('/health')
-      .expect(200);
+    const body = ${bodyOf('/health')};
 
-    expect(response.body).toMatchObject({
+    expect(body).toMatchObject({
       success: true,
       status: 'healthy'
     });
   });
 
   test('GET / should return welcome message', async () => {
-    const response = await request(app.core.getHttpServer().getServer())
-      .get('/')
-      .expect(200);
+    const body = ${bodyOf('/')};
 
-    expect(response.body).toHaveProperty('message');
-    expect(response.body.message).toContain('Welcome');
+    expect(body).toHaveProperty('message');
+    expect(body.message).toContain('Welcome');
   });
-});`;
+});
+`;
 
-    await writeFile(join(projectPath, 'tests', 'app.test.ts'), testContent);
+    if (config.runtime === 'node') {
+      return `// Sample Integration Test
+import { createServer } from 'node:net';
+import type { AddressInfo } from 'node:net';
+import { afterAll, beforeAll, describe, expect, test } from '@jest/globals';
+import request from 'supertest';
+
+// src/index.ts starts the server when it is imported, on PORT / HOST. Reserve a
+// free port first so the tests never collide with a running dev server.
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = probe.address() as AddressInfo;
+      probe.close(() => resolve(port));
+    });
+  });
+}
+
+let app: { close(): Promise<void> } | undefined;
+let baseUrl = '';
+
+beforeAll(async () => {
+  const port = await freePort();
+  process.env.PORT = String(port);
+  process.env.HOST = '127.0.0.1';
+  baseUrl = \`http://127.0.0.1:\${port}\`;
+
+  ({ app } = await import('../src/index.js'));
+
+  // listen() returns before the socket is bound: wait until /health answers.
+  for (let attempt = 0; attempt < 50; attempt++) {
+    try {
+      await request(baseUrl).get('/health');
+      return;
+    } catch {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
+  throw new Error(\`Server did not start on \${baseUrl}\`);
+});
+
+afterAll(async () => {
+  await app?.close();
+});
+
+${assertions(path => `(await request(baseUrl).get('${path}').expect(200)).body`)}`;
+    }
+
+    if (config.runtime === 'aws-lambda') {
+      return `// Sample Integration Test
+import { beforeAll, describe, expect, test } from '@jest/globals';
+
+// src/index.ts exports the Lambda handler as its default export.
+let handler: (event: any, context: any) => Promise<{ statusCode: number; body: string }>;
+
+beforeAll(async () => {
+  ({ default: handler } = (await import('../src/index.js')) as any);
+});
+
+// Invokes the handler with an API Gateway proxy event and returns the JSON body.
+async function get(path: string): Promise<any> {
+  const response = await handler(
+    {
+      httpMethod: 'GET',
+      path,
+      headers: { host: 'localhost' },
+      queryStringParameters: null,
+      body: null,
+      isBase64Encoded: false,
+      requestContext: {}
+    },
+    { awsRequestId: 'test' }
+  );
+  expect(response.statusCode).toBe(200);
+  return JSON.parse(response.body);
+}
+
+${assertions(path => `await get('${path}')`)}`;
+    }
+
+    // vercel-edge and cloudflare-workers: a fetch-style handler (Request -> Response).
+    return `// Sample Integration Test
+import { beforeAll, describe, expect, test } from '@jest/globals';
+
+// src/index.ts exports the fetch-style handler as its default export.
+let handler: (request: Request, ...rest: any[]) => Promise<Response>;
+
+beforeAll(async () => {
+  ({ default: handler } = (await import('../src/index.js')) as any);
+});
+
+// Calls the handler with a Request and returns the JSON body.
+async function get(path: string): Promise<any> {
+  const response = await handler(new Request(\`http://localhost\${path}\`));
+  expect(response.status).toBe(200);
+  return response.json();
+}
+
+${assertions(path => `await get('${path}')`)}`;
   }
 
   private displaySuccessMessage(projectName: string, config: ResolvedConfig): void {

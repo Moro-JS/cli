@@ -6,7 +6,7 @@ Thank you for your interest in contributing to the MoroJS CLI! This guide will h
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 20+
 - npm or yarn
 - Git
 
